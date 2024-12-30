@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Meta Tags -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SSTA | ISRO</title>
+
+  <script src="https://unpkg.com/leaflet-polygon-mask"></script>
+
+  <!-- Tailwind CSS -->
+  <link href="https://unpkg.com/tailwindcss@^1.0/dist/tailwind.min.css" rel="stylesheet" />
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
+  <!-- Custom Styles -->
+  <style>
+    /* Ensure the body and html take full height */
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* Map Containers */
+    .map-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 0; /* Base layer */
+    }
+
+    /* Leaflet Map Styling */
+    #map {
+      height: 100%;
+      width: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 0; /* Leaflet map at base */
+    }
+
+    /* Windy Map Styling */
+    #windy {
+      height: 100%;
+      width: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1; /* Windy overlay above Leaflet */
+      pointer-events: none; /* Allow interactions to pass through */
+      opacity: 0.6; /* Adjust opacity as needed */
+      display: none;
+    }
+
+    /* Form Container Styling */
+    .form-container {
+      position: relative; /* Ensure it maintains its layout */
+      z-index: 10; /* Above both maps */
+      max-width: 400px;
+    }
+
+    /* Legend Styling */
+    .legend {
+      background: white;
+      padding: 10px;
+      border-radius: 5px;
+      box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+      font-family: Arial, sans-serif;
+      position: absolute;
+      bottom: 110px;
+      left: 110px;
+      z-index: 1000; /* Above both maps */
+    }
+
+    .legend h4 {
+      margin: 0 0 5px;
+      font-size: 16px;
+    }
+
+    .legend .gradient {
+      width: 100%;
+      height: 20px;
+      background: linear-gradient(to right, blue, cyan, green, yellow, red);
+    }
+
+    .legend .labels {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 5px;
+      font-size: 14px;
+    }
+
+    /* High-Medium-Low Legend Styling */
+    .legend-hml {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      margin-bottom: 5px;
+    }
+
+    .legend-color {
+      width: 20px;
+      height: 20px;
+      margin-right: 5px;
+    }
+  </style>
+</head>
+<body class="text-gray-600 body-font">
+  <!-- Header -->
+  <header class="text-gray-600 body-font">
+    <div class="container mx-auto flex flex-wrap p-5 flex-col md:flex-row items-center">
+      <a class="flex title-font font-medium items-center text-gray-900 mb-4 md:mb-0">
+        <img src="{{ url_for('static', filename='nrsc-isro.png') }}" alt="ISU" class="w-auto h-20 p-2" />
+        <span class="ml-3 text-xl">Smart System for Tracking Air Pollution</span>
+      </a>
+      <nav class="md:ml-auto flex flex-wrap items-center text-base justify-center">
+        <a href="/" class="mr-5 hover:text-gray-900">Home</a>
+        <a href="/about" class="mr-5 hover:text-gray-900">About</a>
+        <a href="https://github.com/drashutoshspace/SSTA-Smart-System-for-Tracking-Airpollution" target="_blank" class="mr-5 hover:text-gray-900">Github</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Main Section -->
+  <section class="text-gray-600 body-font relative">
+    <!-- Map Containers -->
+    <div class="map-container">
+      <div id="map"></div> <!-- Leaflet Map -->
+      <div id="windy"></div> <!-- Windy Map -->
+    </div>
+
+    <!-- Form Container -->
+    <div class="container px-5 py-24 mx-auto flex">
+      <div class="lg:w-1/4 md:w-1/3 bg-white rounded-lg p-3 flex flex-col md:ml-auto w-full mt-5 md:mt-0 relative z-10 form-container">
+        <h2 class="text-gray-900 text-sm mb-2 font-medium title-font">Select City</h2>
+        <p class="leading-relaxed mb-3 text-gray-600 text-xs">Select a city or enter the latitude and longitude to view the pollutant concentration over that area.</p>
+
+        <!-- City Selection -->
+        <div class="relative mb-3">
+          <label for="city" class="leading-7 text-xs text-gray-600">City</label>
+          <select id="city" name="city" class="w-full bg-white rounded border border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 text-xs outline-none text-gray-700 py-1 px-2 leading-6 transition-colors duration-200 ease-in-out">
+            <option value="Manual"><b>Enter Manually</b></option>
+            <option value="Delhi">Delhi</option>
+            <option value="Mumbai">Mumbai</option>
+            <option value="Kolkata">Kolkata</option>
+            <option value="Chennai">Chennai</option>
+            <option value="Bengaluru">Bengaluru</option>
+            <option value="Hyderabad" selected>Hyderabad</option>
+            <option value="Pune">Pune</option>
+            <option value="Ahmedabad">Ahmedabad</option>
+            <option value="Jaipur">Jaipur</option>
+            <option value="Lucknow">Lucknow</option>
+            <option value="Surat">Surat</option>
+            <option value="Kanpur">Kanpur</option>
+            <option value="Nagpur">Nagpur</option>
+            <option value="Indore">Indore</option>
+            <option value="Thane">Thane</option>
+            <option value="Bhopal">Bhopal</option>
+            <option value="Patna">Patna</option>
+            <option value="Vadodara">Vadodara</option>
+            <option value="Ludhiana">Ludhiana</option>
+            <option value="Agra">Agra</option>            
+          </select>
+        </div>
+
+        <!-- Manual Latitude and Longitude Inputs -->
+        <div id="manual-inputs" style="display: none">
+          <div class="relative mb-3">
+            <label for="lat" class="leading-7 text-xs text-gray-600">Latitude</label>
+            <input type="text" id="lat" name="lat" class="w-full bg-white rounded border border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 text-xs outline-none text-gray-700 py-1 px-2 leading-6 transition-colors duration-200 ease-in-out" />
+          </div>
+          <div class="relative mb-3">
+            <label for="lon" class="leading-7 text-xs text-gray-600">Longitude</label>
+            <input type="text" id="lon" name="lon" class="w-full bg-white rounded border border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 text-xs outline-none text-gray-700 py-1 px-2 leading-6 transition-colors duration-200 ease-in-out" />
+          </div>
+        </div>
+
+        <!-- Buffer Radius -->
+        <div class="relative mb-3">
+          <label for="buffer" class="leading-7 text-xs text-gray-600">Buffer Radius (meters)</label>
+          <input type="text" id="buffer" name="buffer" class="w-full bg-white rounded border border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 text-xs outline-none text-gray-700 py-1 px-2 leading-6 transition-colors duration-200 ease-in-out" value="50000" />
+        </div>
+
+        <!-- Start and End Dates -->
+        <div class="relative mb-3">
+          <label for="start_date" class="leading-7 text-xs text-gray-600">Start Date</label>
+          <input type="date" id="start_date" name="start_date" class="w-full bg-white rounded border border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 text-xs outline-none text-gray-700 py-1 px-2 leading-6 transition-colors duration-200 ease-in-out" />
+        </div>
+        <div class="relative mb-3">
+          <label for="end_date" class="leading-7 text-xs text-gray-600">End Date</label>
+          <input type="date" id="end_date" name="end_date" class="w-full bg-white rounded border border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 text-xs outline-none text-gray-700 py-1 px-2 leading-6 transition-colors duration-200 ease-in-out" />
+        </div>
+
+        <!-- Pollutant Selection -->
+        <div class="relative lg:w-full xl:w-full w-full mt-3">
+          <label for="pollutant" class="leading-7 text-xs text-gray-600">Pollutant</label>
+          <select id="pollutant" name="pollutant" class="w-full bg-gray-100 bg-opacity-50 rounded border border-gray-300 focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-200 text-xs outline-none text-gray-700 py-1 px-2 leading-6 transition-colors duration-200 ease-in-out">
+            <option value="CO">CO</option>
+            <option value="NO2">NO2</option>
+            <option value="PM2.5">PM2.5</option>
+            <option value="PM10">PM10</option>
+            <option value="SO2">SO2</option>
+            <option value="O3">O3</option>
+            <option value="HCHO">HCHO</option>
+          </select>
+        </div>
+
+        <!-- Show Air Direction Checkbox -->
+        <div class="relative mb-3 mt-3">
+          <label for="show_air_direction" class="leading-7 text-xs text-gray-600">
+            <input type="checkbox" id="show_air_direction" name="show_air_direction" class="mr-2">
+            Show Live Wind Flow
+          </label>
+        </br>
+          <label for="show_high_medium_low" class="leading-7 text-xs text-gray-600">
+            <input type="checkbox" id="show_high_medium_low" name="show_high_medium_low" class="mr-2">
+            Show Concentration Regions
+          </label>
+        </div>
+
+        <!-- Show Concentration Button with Loading Spinner -->
+        <button id="show-concentration-btn" class="inline-flex items-center justify-center text-white bg-indigo-500 border-0 py-2 px-4 focus:outline-none hover:bg-indigo-600 rounded text-sm mt-3">
+          <span id="button-text">Show Concentration</span>
+          <svg id="loading-spinner" class="animate-spin h-5 w-5 ml-2 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Legend -->
+    <div id="legend" class="legend"></div>
+  </section>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.4.0/dist/leaflet.js"></script>
+
+  <!-- Windy API JS -->
+  <script src="https://api.windy.com/assets/map-forecast/libBoot.js"></script>
+
+  <!-- Main Script -->
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      // Initialize Leaflet Map
+      const leafletMap = L.map("map").setView([20, 0], 2);
+
+      // Add OpenStreetMap Tile Layer
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+      }).addTo(leafletMap);
+
+      let windyAPIInstance = null;
+      let currentBuffer = null;
+      let windyDiv = document.getElementById("windy");
+      let currentPollutantLayer = null; // Keep track of the current pollutant layer
+
+      // Load India Boundary GeoJSON
+      fetch("{{ url_for('static', filename='India_State_Boundary.geojson') }}")
+        .then((response) => response.json())
+        .then((geojson) => {
+          L.geoJSON(geojson, {
+            style: {
+              color: "grey",
+              weight: 1,
+              opacity: 0.8,
+            },
+          }).addTo(leafletMap);
+        })
+        .catch((error) => console.error("Error loading India GeoJSON:", error));
+
+      // Set default dates for start_date and end_date inputs
+      const endDateInput = document.getElementById("end_date");
+      const startDateInput = document.getElementById("start_date");
+
+      const today = new Date();
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+
+      const oneMonthBeforeYesterday = new Date(yesterday);
+      oneMonthBeforeYesterday.setMonth(oneMonthBeforeYesterday.getMonth() - 1);
+
+      // Format dates to YYYY-MM-DD
+      const formatDate = (date) => {
+        let month = '' + (date.getMonth() + 1);
+        let day = '' + date.getDate();
+        const year = date.getFullYear();
+
+        if (month.length < 2)
+          month = '0' + month;
+        if (day.length < 2)
+          day = '0' + day;
+
+        return [year, month, day].join('-');
+      }
+
+      endDateInput.value = formatDate(yesterday);
+      startDateInput.value = formatDate(oneMonthBeforeYesterday);
+
+      // Event Listener for "Show Concentration" Button
+      document.getElementById("show-concentration-btn").addEventListener("click", function () {
+        const showConcentrationBtn = document.getElementById("show-concentration-btn");
+        const loadingSpinner = document.getElementById("loading-spinner");
+        const buttonText = document.getElementById("button-text");
+
+        // Show the loading spinner and change the button text
+        loadingSpinner.classList.remove("hidden");
+        buttonText.textContent = "Loading...";
+        showConcentrationBtn.disabled = true;
+
+        const city = document.getElementById("city").value;
+        let lat, lon;
+
+        // Set Latitude and Longitude Based on Selected City
+        if (city === "Delhi") {
+          lat = 28.6139;
+          lon = 77.2090;
+        } else if (city === "Mumbai") {
+          lat = 19.0760;
+          lon = 72.8777;
+        } else if (city === "Kolkata") {
+          lat = 22.5726;
+          lon = 88.3639;
+        } else if (city === "Chennai") {
+          lat = 13.0827;
+          lon = 80.2707;
+        } else if (city === "Bengaluru") {
+          lat = 12.9716;
+          lon = 77.5946;
+        } else if (city === "Hyderabad") {
+          lat = 17.3850;
+          lon = 78.4867;
+        } else if (city === "Pune") {
+          lat = 18.5204;
+          lon = 73.8567;
+        } else if (city === "Ahmedabad") {
+          lat = 23.0225;
+          lon = 72.5714;
+        } else if (city === "Jaipur") {
+          lat = 26.9124;
+          lon = 75.7873;
+        } else if (city === "Lucknow") {
+          lat = 26.8467;
+          lon = 80.9462;
+        } else if (city === "Surat") {
+          lat = 21.1702;
+          lon = 72.8311;
+        } else if (city === "Kanpur") {
+          lat = 26.4499;
+          lon = 80.3319;
+        } else if (city === "Nagpur") {
+          lat = 21.1458;
+          lon = 79.0882;
+        } else if (city === "Indore") {
+          lat = 22.7196;
+          lon = 75.8577;
+        } else if (city === "Thane") {
+          lat = 19.2183;
+          lon = 72.9781;
+        } else if (city === "Bhopal") {
+          lat = 23.2599;
+          lon = 77.4126;
+        } else if (city === "Patna") {
+          lat = 25.5941;
+          lon = 85.1376;
+        } else if (city === "Vadodara") {
+          lat = 22.3072;
+          lon = 73.1812;
+        } else if (city === "Ludhiana") {
+          lat = 30.9010;
+          lon = 75.8573;
+        } else if (city === "Agra") {
+          lat = 27.1767;
+          lon = 78.0081;
+        }
+         else if (city === "Manual") {
+          lat = parseFloat(document.getElementById("lat").value);
+          lon = parseFloat(document.getElementById("lon").value);
+        }
+
+        // Validate Latitude and Longitude
+        if (isNaN(lat) || isNaN(lon)) {
+          alert("Please enter valid latitude and longitude.");
+          // Hide the loading spinner and reset the button text
+          loadingSpinner.classList.add("hidden");
+          buttonText.textContent = "Show Concentration";
+          showConcentrationBtn.disabled = false;
+          return;
+        }
+
+        const bufferRadius = parseInt(document.getElementById("buffer").value, 10);
+        const startDate = document.getElementById("start_date").value;
+        const endDate = document.getElementById("end_date").value;
+        const pollutant = document.getElementById("pollutant").value;
+        const showAirDirection = document.getElementById("show_air_direction").checked;
+        // Capture the state of the new checkbox
+        const showHighMediumLow = document.getElementById("show_high_medium_low").checked;
+
+
+        // Remove Existing Buffer if Any
+        if (currentBuffer) {
+          leafletMap.removeLayer(currentBuffer);
+        }
+
+        // Add New Buffer Circle
+        currentBuffer = L.circle([lat, lon], {
+          radius: bufferRadius,
+          color: "red",
+          fillColor: "#f03",
+          fillOpacity: 0,
+        }).addTo(leafletMap);
+
+        // Adjust Map View to Fit Buffer Bounds
+        leafletMap.fitBounds(currentBuffer.getBounds());
+        const adjustedCenter = [lat, lon + 0.1]; 
+        leafletMap.setView(adjustedCenter, leafletMap.getZoom());
+
+        // Fetch Pollutant Data from API
+        fetch(`/api/get-pollutant?lat=${lat}&lon=${lon}&buffer=${bufferRadius}&start_date=${startDate}&end_date=${endDate}&pollutant=${pollutant}&hml=${showHighMediumLow}`)
+          .then((response) => response.json())
+          .then((data) => {
+            if (data.error) {
+              alert(data.error);
+              // Hide the loading spinner and reset the button text
+              loadingSpinner.classList.add("hidden");
+              buttonText.textContent = "Show Concentration";
+              showConcentrationBtn.disabled = false;
+              return;
+            }
+
+            // Create Pollutant Layer
+            const pollutantLayer = L.tileLayer(data.tile_url, {
+              opacity: 0.6,
+              minZoom: 1,
+              maxZoom: 1000,
+              attribution: '&copy; <a href="https://earthengine.google.com/">Google Earth Engine</a>',
+            });
+
+            // Remove Existing Pollutant Layer
+            if (currentPollutantLayer) {
+              leafletMap.removeLayer(currentPollutantLayer);
+            }
+
+            // Add Event Listener for Tile Layer Load Completion
+            pollutantLayer.on('load', function () {
+              // Tiles are fully loaded
+              // Hide the loading spinner and reset the button text
+              loadingSpinner.classList.add("hidden");
+              buttonText.textContent = "Show Concentration";
+              showConcentrationBtn.disabled = false;
+            });
+
+            // Add Pollutant Layer to Map
+            pollutantLayer.addTo(leafletMap);
+            currentPollutantLayer = pollutantLayer;
+
+            // Get Unit for Selected Pollutant
+            const unit = data.unit || "";
+            const minValue = data.min_raw;
+            const maxValue = data.max_raw;
+
+            // Update Legend
+            updateLegend(minValue, maxValue, unit, data.legend_labels);
+
+            // Initialize Windy API if Wind Flow is Selected
+            if (showAirDirection) {
+              windyDiv.style.display = "block";
+
+              if (!windyAPIInstance) {
+                windyInit({
+                  key: 'DHnqHp6YzeueWA6uhkK3cxT8USF5QsuX', // Replace 'YOUR_API_KEY' with your actual API key
+                  lat: lat,
+                  lon: lon,
+                  zoom: leafletMap.getZoom(),
+                  container: 'windy',
+                  overlay: 'wind',
+                }, function (windyAPI) {
+                  console.log('Windy API Initialized');
+                  windyAPIInstance = windyAPI;
+
+                  const { map: windyMap } = windyAPI;
+
+                  // Synchronize Windy Map with Leaflet Map
+                  leafletMap.on('moveend zoomend', () => {
+                    const center = leafletMap.getCenter();
+                    const zoom = leafletMap.getZoom();
+                    windyMap.setView([center.lat, center.lng], zoom);
+                  });
+
+                  // Initial synchronization
+                  const center = leafletMap.getCenter();
+                  const zoom = leafletMap.getZoom();
+                  windyMap.setView([center.lat, center.lng], zoom);
+                });
+              } else {
+                // If Windy is already initialized, just update the view
+                const { map: windyMap } = windyAPIInstance;
+                const center = leafletMap.getCenter();
+                const zoom = leafletMap.getZoom();
+                windyMap.setView([center.lat, center.lng], zoom);
+              }
+            } else {
+              windyDiv.style.display = "none";
+            }
+          })
+          .catch((error) => {
+            console.error("Error fetching Concentration Data:", error);
+            alert("An error occurred while fetching data.");
+
+            // Hide the loading spinner and reset the button text
+            loadingSpinner.classList.add("hidden");
+            buttonText.textContent = "Show Concentration";
+            showConcentrationBtn.disabled = false;
+          });
+      });
+
+      // Function to Update Legend
+      function updateLegend(minValue, maxValue, unit, legendLabels) {
+        const legend = document.getElementById("legend");
+        const pollutant = document.getElementById("pollutant").value;
+      
+        if (legendLabels) {
+          // Show High-Medium-Low legend
+          legend.innerHTML = `
+            <h4>Concentration of ${pollutant}</h4>
+            <div class="legend-hml">
+              <div class="legend-item">
+                <span class="legend-color" style="background-color: blue;"></span>
+                <span class="legend-label">Low [<30%]</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-color" style="background-color: yellow;"></span>
+                <span class="legend-label">Medium [30-60%]</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-color" style="background-color: red;"></span>
+                <span class="legend-label">High [>60%]</span>
+              </div>
+            </div>
+          `;
+        } else {
+          // Existing gradient legend
+          const formattedMin = parseFloat(minValue).toFixed(2);
+          const formattedMax = parseFloat(maxValue).toFixed(2);
+          legend.innerHTML = `
+            <h4>Concentration of ${pollutant} in (${unit})</h4>
+            <div class="gradient"></div>
+            <div class="labels">
+              <span>${formattedMin}</span>
+              <span>${formattedMax}</span>
+            </div>
+          `;
+        }
+      }
+
+      // Event Listener for City Selection Change
+      document.getElementById("city").addEventListener("change", function () {
+        if (this.value === "Manual") {
+          document.getElementById("manual-inputs").style.display = "block";
+        } else {
+          document.getElementById("manual-inputs").style.display = "none";
+        }
+      });
+    });
+  </script>
+</body>
+</html>
