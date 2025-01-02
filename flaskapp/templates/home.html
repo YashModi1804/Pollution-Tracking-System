@@ -233,7 +233,7 @@
         <div id="city-boundary-container">
           <div class="relative mb-3 mt-3">
             <label for="use_city_boundary" class="leading-7 text-xs text-gray-600">
-              <input type="checkbox" id="use-city-boundary" name="use_city_boundary" class="mr-2">
+              <input type="checkbox" id="use-shapefile" name="use_city_boundary" class="mr-2">
              ShapeFile
             </label>
           </div>
@@ -327,12 +327,49 @@
     document.addEventListener("DOMContentLoaded", function () {
       // Initialize Leaflet Map
       let currentCityBoundaryLayer = null;
-      const leafletMap = L.map("map").setView([20, 0], 2);
+      // Retain your existing variable names and structure
 
-      // Add OpenStreetMap Tile Layer
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-      }).addTo(leafletMap);
+// Define map boundaries
+var lowleft = L.latLng(0, 60);
+var upright = L.latLng(40, 100);
+var maxBoundArea = L.latLngBounds(lowleft, upright);
+
+// Initialize the map
+var leafletMap = L.map('map', {
+    zoomControl: false, // Disable default zoom control to re-position it
+    maxZoom: 18,
+    minZoom: 5,
+   
+}).setView([22, 77], 5); 
+
+
+L.control.zoom({
+    position: 'bottomright'
+}).addTo(leafletMap);
+
+L.tileLayer.wms('https://bhuvan-vec1.nrsc.gov.in/bhuvan/gwc/service/wms?', {
+    layers: 'india3',
+    format: 'image/png',
+    transparent: true,
+    attribution: '&copy; <a href="https://bhuvan.nrsc.gov.in">Bhuvan</a>'
+}).addTo(leafletMap);
+
+// Add state boundary layer from Bhuvan
+L.tileLayer.wms('https://bhuvan-vec1.nrsc.gov.in/bhuvan/gwc/service/wms?', {
+    layers: 'basemap:india_state_bound_lebel_new', // State boundary layer
+    format: 'image/png',
+    transparent: true,
+    attribution: '&copy; <a href="https://bhuvan.nrsc.gov.in">Bhuvan</a>'
+}).addTo(leafletMap);
+
+// Add map scale (in km only)
+// L.control.scale({
+//     imperial: false, // Disable miles (only show km)
+//     position: 'bottomleft'
+// }).addTo(map);
+
+
+
 
       let windyAPIInstance = null;
       let currentBuffer = null;
@@ -406,7 +443,7 @@
 
       endDateInput.value = formatDate(yesterday);
       startDateInput.value = formatDate(oneMonthBeforeYesterday);
-      document.getElementById("use-city-boundary").addEventListener("change", function() {
+      document.getElementById("use-shapefile").addEventListener("change", function() {
         const useCityBoundary = this.checked;
         const bufferContainer = document.getElementById("buffer-container");
         document.getElementById("boundary-options").style.display = this.checked ? "block" : "none";
@@ -763,7 +800,7 @@ function loadStateBoundary() {
   const pollutant = document.getElementById("pollutant").value;
   const showAirDirection = document.getElementById("show_air_direction").checked;
   // Capture the state of the new checkbox
-  const shape = document.getElementById("use-city-boundary").checked;
+  const shape = document.getElementById("use-shapefile").checked;
 
   // Remove Existing Buffer if Any
   if (currentBuffer) {
