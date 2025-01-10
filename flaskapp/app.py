@@ -8,7 +8,7 @@ import math  # Import math module for logarithmic calculations
 app = Flask(__name__)
 
 # Define the file paths
-file_path = "/home/ubuntu/ssta/config/creds2.json"
+file_path = r"D:\Download\SSTA-Smart-System-for-Tracking-Airpollution-main\SSTA-Smart-System-for-Tracking-Airpollution-main\flaskapp\config\creds2.json"
 default_path = "config/creds2.json"
 
 # Check if the file exists and assign the appropriate value to the variable
@@ -23,11 +23,11 @@ m_H2O = 0.01801528  # Molar mass of water vapor (kg/mol)
 m_dry_air = 0.0289644  # Molar mass of dry air (kg/mol)
 
 # Authenticate to Google Earth Engine using the service account
-# credentials = service_account.Credentials.from_service_account_file(
-#     SERVICE_ACCOUNT_FILE,
-#     scopes=['https://www.googleapis.com/auth/cloud-platform']
-# )
-# ee.Initialize(credentials)
+credentials = service_account.Credentials.from_service_account_file(
+    SERVICE_ACCOUNT_FILE,
+    scopes=['https://www.googleapis.com/auth/cloud-platform']
+)
+ee.Initialize(credentials)
 # Check if credentials file exists before loading
 try:
     credentials = service_account.Credentials.from_service_account_file(
