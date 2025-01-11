@@ -538,28 +538,33 @@ L.tileLayer.wms('https://bhuvan-vec1.nrsc.gov.in/bhuvan/gwc/service/wms?', {
 //state boundaries
 
 function loadStateBoundary() {
-    const stateName=document.getElementById('state').value
+    const stateName = document.getElementById('state').value;
     const loadingSpinner = document.getElementById("loading-spinner");
+    const showConcentrationBtn = document.getElementById("show-concentration-btn");
+    const buttonText = document.getElementById("button-text"); // Added missing reference
 
-    const geojsonFileName = stateName+ ".geojson"; // Convert to uppercase and replace spaces with underscores
+    const geojsonFileName = stateName + ".geojson";
     const geojsonPath = `/static/state/${geojsonFileName}`;
-    // Remove existing state boundary layer
+
     if (stateLayer) {
-      leafletMap.removeLayer(stateLayer);
+        leafletMap.removeLayer(stateLayer);
     }
 
-    // Fetch the GeoJSON file and add it to the map
     fetch(geojsonPath)
         .then(response => response.json())
         .then(data => {
             stateLayer = L.geoJSON(data, {
                 style: {
-                    color: "#FF5733", // Boundary color
-                    weight: 2,
-                    fillOpacity: 0.2 // Semi-transparent fill
+                    color: "#FF5733",
+                    
+                    fillOpacity: 0.001
                 }
             }).addTo(leafletMap);
-            leafletMap.fitBounds(stateLayer.getBounds()); // Adjust map to fit boundary
+            
+            if (stateLayer && stateLayer.getBounds) { // Add null check
+                leafletMap.fitBounds(stateLayer.getBounds());
+            }
+            
             loadingSpinner.classList.add("hidden");
             buttonText.textContent = "Show Concentration";
             showConcentrationBtn.disabled = false;
@@ -571,7 +576,6 @@ function loadStateBoundary() {
             showConcentrationBtn.disabled = false;
         });
 }
-
 
       // Event Listener for "Show Concentration" Button
       document.getElementById("show-concentration-btn").addEventListener("click", function () {
@@ -864,7 +868,8 @@ function loadStateBoundary() {
   showConcentrationBtn.disabled = false;
 
   // Fetch Pollutant Data from API based on the checkbox
-  fetch(`/api/get-pollutant?lat=${lat}&lon=${lon}&buffer=${bufferRadius}&start_date=${startDate}&end_date=${endDate}&pollutant=${pollutant}&hml=${showHighMediumLow}`)
+  if(!shape){
+    fetch(`/api/get-pollutant?lat=${lat}&lon=${lon}&buffer=${bufferRadius}&start_date=${startDate}&end_date=${endDate}&pollutant=${pollutant}&hml=${showHighMediumLow}`)
     .then((response) => response.json())
     .then((data) => {
       if (data.error) {
@@ -981,7 +986,82 @@ function loadStateBoundary() {
       buttonText.textContent = "Show Concentration";
       showConcentrationBtn.disabled = false;
     });
-});
+  }
+  else{
+    if(useCityBoundary){
+      fetch(`/api/get-pollutant-city?city=${city}&start_date=${startDate}&end_date=${endDate}&pollutant=${pollutant}&hml=${showHighMediumLow}`)
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.error) {
+          alert(data.error);
+          // Hide the loading spinner and reset the button text
+          loadingSpinner.classList.add("hidden");
+          buttonText.textContent = "Show Concentration";
+          showConcentrationBtn.disabled = false;
+          return;
+        }
+
+        // Handle city-based pollutant layer
+        const pollutantLayer = L.tileLayer(data.tile_url, {
+          opacity: 0.6,
+          minZoom: 1,
+          maxZoom: 1000,
+          attribution: '&copy; <a href="https://earthengine.google.com/">Google Earth Engine</a>',
+        });
+
+        // Remove Existing Pollutant Layer
+        if (currentPollutantLayer) {
+          leafletMap.removeLayer(currentPollutantLayer);
+        }
+
+        // Add Pollutant Layer to Map
+        pollutantLayer.addTo(leafletMap);
+        currentPollutantLayer = pollutantLayer;
+
+        // Update Legend
+        updateLegend(data.min_raw, data.max_raw, data.unit, data.legend_labels);
+      });
+    }
+    else{
+      loadStateBoundary();
+      fetch(`/api/get-pollutant-state?state=${state}&start_date=${startDate}&end_date=${endDate}&pollutant=${pollutant}&hml=${showHighMediumLow}`)
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.error) {
+          alert(data.error);
+          // Hide the loading spinner and reset the button text
+          loadingSpinner.classList.add("hidden");
+          buttonText.textContent = "Show Concentration";
+          showConcentrationBtn.disabled = false;
+          return;
+        }
+
+        // Handle state-based pollutant layer
+        const pollutantLayer = L.tileLayer(data.tile_url, {
+          opacity: 0.6,
+          minZoom: 1,
+          maxZoom: 1000,
+          attribution: '&copy; <a href="https://earthengine.google.com/">Google Earth Engine</a>',
+        });
+
+        // Remove Existing Pollutant Layer
+        if (currentPollutantLayer) {
+          leafletMap.removeLayer(currentPollutantLayer);
+        }
+
+        // Add Pollutant Layer to Map
+        pollutantLayer.addTo(leafletMap);
+        currentPollutantLayer = pollutantLayer;
+
+        // Update Legend
+        updateLegend(data.min_raw, data.max_raw, data.unit, data.legend_labels);
+      });
+  }
+    }
+  }
+  
+  
+);
 
 // Function to Update Legend
 function updateLegend(minValue, maxValue, unit, legendLabels) {
