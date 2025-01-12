@@ -726,11 +726,12 @@ def get_pollutant_state():
     import ee
     from flask import request, jsonify
     from concurrent.futures import ThreadPoolExecutor
+    import math
 
     try:
         start_time = time.time()
 
-        # Step 1: Get and validate query parameters
+        # Get and validate query parameters
         state = request.args.get('state')
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
@@ -740,9 +741,9 @@ def get_pollutant_state():
         if not all([state, start_date, end_date, pollutant]):
             return jsonify({'error': 'Missing required parameters'}), 400
 
-        print(f"Step 1: Parameters validated in {time.time() - start_time:.2f} seconds")
+        print(f"Step 1: Received query parameters in {time.time() - start_time:.2f} seconds")
 
-        # Step 2: Load and process GeoJSON asynchronously
+        # Load GeoJSON asynchronously
         def load_geojson():
             geojson_path = f"flaskapp/static/state/{state}.geojson"
             with open(geojson_path, 'r') as f:
@@ -752,15 +753,53 @@ def get_pollutant_state():
             geojson_future = executor.submit(load_geojson)
             geojson_data = geojson_future.result()
 
-        print(f"Step 2: GeoJSON loaded in {time.time() - start_time:.2f} seconds")
+        print(f"Step 2: Loaded GeoJSON in {time.time() - start_time:.2f} seconds")
 
-        # Step 3: Initialize and optimize geometry
+        # Calculate the bounding circle
+        def calculate_bounding_circle(coordinates):
+            lats = []
+            lons = []
+            
+            def extract_coords(coord_list):
+                for item in coord_list:
+                    if isinstance(item[0], list):
+                        extract_coords(item)
+                    else:
+                        lons.append(item[0])
+                        lats.append(item[1])
+            
+            extract_coords(geojson_data['features'][0]['geometry']['coordinates'])
+            
+            # Calculate center
+            center_lat = (max(lats) + min(lats)) / 2
+            center_lon = (max(lons) + min(lons)) / 2
+            
+            # Calculate radius (in meters)
+            max_distance = 0
+            for lat, lon in zip(lats, lons):
+                R = 6371000  # Earth's radius in meters
+                dlat = math.radians(lat - center_lat)
+                dlon = math.radians(lon - center_lon)
+                a = (math.sin(dlat/2) * math.sin(dlat/2) +
+                     math.cos(math.radians(center_lat)) * math.cos(math.radians(lat)) *
+                     math.sin(dlon/2) * math.sin(dlon/2))
+                c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+                distance = R * c
+                max_distance = max(max_distance, distance)
+            
+            return center_lat, center_lon, max_distance
+
+        # Calculate bounding circle
+        center_lat, center_lon, radius = calculate_bounding_circle(
+            geojson_data['features'][0]['geometry']['coordinates']
+        )
+        print(f"Step 3: Calculated bounding circle in {time.time() - start_time:.2f} seconds")
+
+        # Create circular and state geometries
+        circle_geometry = ee.Geometry.Point([center_lon, center_lat]).buffer(radius)
         state_geometry = ee.Geometry(geojson_data['features'][0]['geometry'])
-        state_geometry = state_geometry.simplify(maxError=1000)  # Aggressive simplification
-        bounding_box = state_geometry.bounds()
-        print(f"Step 3: Geometry processed in {time.time() - start_time:.2f} seconds")
 
-        # Step 4: Select appropriate collection and processing based on pollutant
+        # Configure pollutant collection parameters
         pollutant_configs = {
             'PM2.5': {
                 'collection': 'MODIS/061/MCD19A2_GRANULES',
@@ -796,33 +835,39 @@ def get_pollutant_state():
 
         config = pollutant_configs[pollutant]
 
-        # Step 5: Filter and process collection with optimized parameters
+        # Filter and process collection using circle geometry
         filtered_collection = ee.ImageCollection(config['collection']) \
-            .filterBounds(bounding_box) \
+            .filterBounds(circle_geometry) \
             .filterDate(start_date, end_date) \
             .select(config['band'])
 
-        # Apply mask for negative values
+        print(f"Step 4: Filtered ImageCollection in {time.time() - start_time:.2f} seconds")
+
         def mask_negative_values(image):
             return image.updateMask(image.gte(0))
 
         filtered_collection = filtered_collection.map(mask_negative_values)
 
-        # Calculate mean with scale factor if applicable
-        pollutant_mean = filtered_collection.mean().clip(state_geometry)
+        # Calculate mean and clip to state geometry
+        pollutant_mean = filtered_collection.mean()
         if 'scale_factor' in config:
             pollutant_mean = pollutant_mean.multiply(config['scale_factor']).add(config.get('offset', 0))
+        
+        # Clip to state geometry after all calculations
+        pollutant_mean = pollutant_mean.clip(state_geometry)
 
-        print(f"Step 5: Collection processed in {time.time() - start_time:.2f} seconds")
+        print(f"Step 5: Calculated mean and clipped in {time.time() - start_time:.2f} seconds")
 
-        # Step 6: Compute statistics with optimized parameters
+        # Compute statistics
         stats = pollutant_mean.reduceRegion(
             reducer=ee.Reducer.percentile([5, 95]),
-            geometry=state_geometry,
-            scale=5000,  # Increased scale for faster processing
+            geometry=circle_geometry,  # Use circle geometry for stats
+            scale=5000,
             maxPixels=1e9,
             bestEffort=True
         ).getInfo()
+
+        print(f"Step 6: Reduced region stats in {time.time() - start_time:.2f} seconds")
 
         band_name = config['band']
         min_value = stats.get(f'{band_name}_p5', 0)
@@ -834,7 +879,7 @@ def get_pollutant_state():
 
         buffer_range = abs(max_value - min_value) * 0.1
 
-        # Step 7: Generate visualization parameters
+        # Generate visualization parameters
         if hml:
             vis_params = {
                 'min': min_value,
@@ -852,15 +897,11 @@ def get_pollutant_state():
             }
             legend_labels = None
 
-        # Step 8: Generate map tiles with cache options
-        map_id = pollutant_mean.getMapId({
-            **vis_params,
-            'format': 'png',
-            'region': state_geometry,
-        })
-        
+        # Generate map tiles
+        map_id = pollutant_mean.getMapId(vis_params)
         tile_url = map_id['tile_fetcher'].url_format
-        print(f"Step 8: Visualization complete in {time.time() - start_time:.2f} seconds")
+
+        print(f"Step 7: Generated map tiles in {time.time() - start_time:.2f} seconds")
 
         return jsonify({
             'tile_url': tile_url,
