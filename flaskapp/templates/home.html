@@ -506,11 +506,12 @@ L.tileLayer.wms('https://bhuvan-vec1.nrsc.gov.in/bhuvan/gwc/service/wms?', {
       .then(geojson => {
         currentCityBoundaryLayer = L.geoJSON(geojson, {
           style: {
-    color: null,          // No boundary color
-    weight: 0,            // No boundary weight
-    opacity: 0,           // No boundary opacity
-    fillColor: "red",     // Fill color inside the boundary
-    fillOpacity: 0.2      // Transparency of the fill
+            
+    color: "#FF5733",          // No boundary color
+    // weight: 0,            // No boundary weight
+    // opacity: 0,           // No boundary opacity
+    // fillColor: "red",     // Fill color inside the boundary
+    fillOpacity: 0.001      // Transparency of the fill
 }
 
         }).addTo(leafletMap);
@@ -1088,11 +1089,13 @@ function updateLegend(minValue, maxValue, unit, legendLabels) {
       </div>
     `;
   } else {
-    // Show range-based legend
+    // Show range-based legend with gradient
     legend.innerHTML = `
       <h4>Concentration of ${pollutant}</h4>
-      <div class="legend-range">
-        <span>${minValue}${unit}</span> - <span>${maxValue}${unit}</span>
+      <div class="gradient"></div>
+      <div class="labels">
+        <span>${minValue}${unit}</span>
+        <span>${maxValue}${unit}</span>
       </div>
     `;
   }

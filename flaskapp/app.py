@@ -5,8 +5,10 @@ from google.oauth2 import service_account
 from datetime import datetime, timedelta
 import math  # Import math module for logarithmic calculations
 import json
-
 app = Flask(__name__)
+from flask_caching import Cache
+from functools import lru_cache
+cache = Cache(app, config={'CACHE_TYPE': 'simple'})
 
 # Define the file paths
 file_path = r"D:\Download\SSTA-Smart-System-for-Tracking-Airpollution-main\SSTA-Smart-System-for-Tracking-Airpollution-main\flaskapp\config\creds2.json"
@@ -679,59 +681,98 @@ def get_pollutant():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-@app.route('/api/get-pollutant-city', methods=['GET'])
-def get_pollutant_city():
-    try:
-        city = request.args.get('city')
-        start_date = request.args.get('start_date')
-        end_date = request.args.get('end_date')
-        pollutant = request.args.get('pollutant')
-        hml = request.args.get('hml')  # High, Medium, Low flag (optional)
 
-        # Load the city's geoJSON file (assuming the file is stored in the "static/dissolved_output" directory)
-        city_path = f"static/dissolved_output/dissolved_{city.upper()}.geojson"
-        
-        # Create an Earth Engine FeatureCollection from the city GeoJSON
-        city_fc = ee.FeatureCollection(ee.Geometry(city_path))
-        
-        # Filter the pollutant data for the specified time range
-        collection = ee.ImageCollection(f"users/your_username/pollutant_data/{pollutant}")
-        collection_filtered = collection.filterDate(start_date, end_date)
+POLLUTANT_CONFIGS = {
+    'PM2.5': {
+        'collection': 'MODIS/061/MCD19A2_GRANULES',
+        'band': 'Optical_Depth_055',
+        'scale_factor': 206.91,
+        'offset': 41.181,
+        'unit': 'μg/m³'
+    },
+    'PM10': {
+        'collection': 'MODIS/061/MCD19A2_GRANULES',
+        'band': 'Optical_Depth_055',
+        'scale_factor': 171.58,  # Conversion factor for PM10
+        'offset': 57.892,        # Offset for PM10
+        'unit': 'μg/m³'
+    },
+    'NO2': {
+        'collection': 'COPERNICUS/S5P/NRTI/L3_NO2',
+        'band': 'NO2_column_number_density',
+        'unit': 'mol/m²'
+    },
+    'CO': {
+        'collection': 'COPERNICUS/S5P/NRTI/L3_CO',
+        'band': 'CO_column_number_density',
+        'unit': 'mol/m²'
+    },
+    'SO2': {
+        'collection': 'COPERNICUS/S5P/NRTI/L3_SO2',
+        'band': 'SO2_column_number_density',
+        'unit': 'mol/m²'
+    },
+    'O3': {
+        'collection': 'COPERNICUS/S5P/NRTI/L3_O3',
+        'band': 'O3_column_number_density',
+        'unit': 'mol/m²'
+    }
+}
 
-        # Example: Apply an operation based on pollutant type and HML flag
-        if hml == 'high':
-            collection_filtered = collection_filtered.filter(ee.Filter.gte('concentration', 100))
-        elif hml == 'low':
-            collection_filtered = collection_filtered.filter(ee.Filter.lte('concentration', 10))
+@cache.memoize(timeout=3600)
+def get_optimized_geometry(geojson_path, simplify_error=1000):
+    """Load and optimize geometry from GeoJSON file."""
+    with open(geojson_path, 'r') as f:
+        geojson_data = json.load(f)
+    geometry = ee.Geometry(geojson_data['features'][0]['geometry'])
+    simplified_geom = geometry.simplify(maxError=simplify_error)
+    bounds = simplified_geom.bounds()
+    return {
+        'geometry': simplified_geom,
+        'bounds': bounds
+    }
 
-        # Get the tile URL for the filtered image collection (you can apply additional processing here)
-        image = collection_filtered.mean()  # For example, use mean concentration over the period
-        tile_url = image.getMapId({'min': 0, 'max': 1000, 'palette': 'blue,green,yellow,red'})['tile_fetcher'].url_format
+def process_pollutant_data(geometry_data, pollutant, start_date, end_date, scale=2000):
+    """Process pollutant data for a given geometry."""
+    if pollutant not in POLLUTANT_CONFIGS:
+        raise ValueError(f'Unsupported pollutant: {pollutant}')
 
-        # Return the URL and other relevant information in JSON format
-        return jsonify({
-            'tile_url': tile_url,
-            'unit': 'µg/m³',  # Assuming the unit is micrograms per cubic meter
-            'min_raw': 0,
-            'max_raw': 1000,
-            'legend_labels': ['Low', 'Medium', 'High']  # Customize based on actual data
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)})
+    config = POLLUTANT_CONFIGS[pollutant]
+    bounds = geometry_data['bounds']
+    geometry = geometry_data['geometry']
+
+    # Initial collection filtering
+    collection = ee.ImageCollection(config['collection']) \
+        .filterBounds(bounds) \
+        .filterDate(start_date, end_date) \
+        .select(config['band'])
+
+    # Calculate mean
+    mean_image = collection.mean()
+    
+    # Apply scale factor and offset if specified
+    if 'scale_factor' in config:
+        mean_image = mean_image.multiply(config['scale_factor']).add(config['offset'])
+
+    # Create and apply mask
+    mask = ee.Image.constant(1).clip(geometry).mask()
+    masked_mean = mean_image.updateMask(mask).rename(pollutant)
+
+    # Calculate statistics
+    stats = masked_mean.reduceRegion(
+        reducer=ee.Reducer.percentile([5, 95]),
+        geometry=bounds,
+        scale=scale,
+        maxPixels=1e8,
+        bestEffort=True
+    ).getInfo()
+
+    return masked_mean, stats, config['unit']
 
 @app.route('/api/get-pollutant-state', methods=['GET'])
 def get_pollutant_state():
-    import time
-    import json
-    import ee
-    from flask import request, jsonify
-    from concurrent.futures import ThreadPoolExecutor
-    import math
-
     try:
-        start_time = time.time()
-
-        # Get and validate query parameters
+        # Extract parameters
         state = request.args.get('state')
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
@@ -741,188 +782,125 @@ def get_pollutant_state():
         if not all([state, start_date, end_date, pollutant]):
             return jsonify({'error': 'Missing required parameters'}), 400
 
-        print(f"Step 1: Received query parameters in {time.time() - start_time:.2f} seconds")
-
-        # Load GeoJSON asynchronously
-        def load_geojson():
-            geojson_path = f"flaskapp/static/state/{state}.geojson"
-            with open(geojson_path, 'r') as f:
-                return json.load(f)
-
-        with ThreadPoolExecutor() as executor:
-            geojson_future = executor.submit(load_geojson)
-            geojson_data = geojson_future.result()
-
-        print(f"Step 2: Loaded GeoJSON in {time.time() - start_time:.2f} seconds")
-
-        # Calculate the bounding circle
-        def calculate_bounding_circle(coordinates):
-            lats = []
-            lons = []
-            
-            def extract_coords(coord_list):
-                for item in coord_list:
-                    if isinstance(item[0], list):
-                        extract_coords(item)
-                    else:
-                        lons.append(item[0])
-                        lats.append(item[1])
-            
-            extract_coords(geojson_data['features'][0]['geometry']['coordinates'])
-            
-            # Calculate center
-            center_lat = (max(lats) + min(lats)) / 2
-            center_lon = (max(lons) + min(lons)) / 2
-            
-            # Calculate radius (in meters)
-            max_distance = 0
-            for lat, lon in zip(lats, lons):
-                R = 6371000  # Earth's radius in meters
-                dlat = math.radians(lat - center_lat)
-                dlon = math.radians(lon - center_lon)
-                a = (math.sin(dlat/2) * math.sin(dlat/2) +
-                     math.cos(math.radians(center_lat)) * math.cos(math.radians(lat)) *
-                     math.sin(dlon/2) * math.sin(dlon/2))
-                c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-                distance = R * c
-                max_distance = max(max_distance, distance)
-            
-            return center_lat, center_lon, max_distance
-
-        # Calculate bounding circle
-        center_lat, center_lon, radius = calculate_bounding_circle(
-            geojson_data['features'][0]['geometry']['coordinates']
-        )
-        print(f"Step 3: Calculated bounding circle in {time.time() - start_time:.2f} seconds")
-
-        # Create circular and state geometries
-        circle_geometry = ee.Geometry.Point([center_lon, center_lat]).buffer(radius)
-        state_geometry = ee.Geometry(geojson_data['features'][0]['geometry'])
-
-        # Configure pollutant collection parameters
-        pollutant_configs = {
-            'PM2.5': {
-                'collection': 'MODIS/061/MCD19A2_GRANULES',
-                'band': 'Optical_Depth_055',
-                'scale_factor': 206.91,
-                'offset': 41.181,
-                'unit': 'μg/m³'
-            },
-            'NO2': {
-                'collection': 'COPERNICUS/S5P/NRTI/L3_NO2',
-                'band': 'NO2_column_number_density',
-                'unit': 'mol/m²'
-            },
-            'CO': {
-                'collection': 'COPERNICUS/S5P/NRTI/L3_CO',
-                'band': 'CO_column_number_density',
-                'unit': 'mol/m²'
-            },
-            'SO2': {
-                'collection': 'COPERNICUS/S5P/NRTI/L3_SO2',
-                'band': 'SO2_column_number_density',
-                'unit': 'mol/m²'
-            },
-            'O3': {
-                'collection': 'COPERNICUS/S5P/NRTI/L3_O3',
-                'band': 'O3_column_number_density',
-                'unit': 'mol/m²'
-            }
-        }
-
-        if pollutant not in pollutant_configs:
-            return jsonify({'error': f'Unsupported pollutant: {pollutant}'}), 400
-
-        config = pollutant_configs[pollutant]
-
-        # Filter and process collection using circle geometry
-        filtered_collection = ee.ImageCollection(config['collection']) \
-            .filterBounds(circle_geometry) \
-            .filterDate(start_date, end_date) \
-            .select(config['band'])
-
-        print(f"Step 4: Filtered ImageCollection in {time.time() - start_time:.2f} seconds")
-
-        def mask_negative_values(image):
-            return image.updateMask(image.gte(0))
-
-        filtered_collection = filtered_collection.map(mask_negative_values)
-
-        # Calculate mean and clip to state geometry
-        pollutant_mean = filtered_collection.mean()
-        if 'scale_factor' in config:
-            pollutant_mean = pollutant_mean.multiply(config['scale_factor']).add(config.get('offset', 0))
+        # Get optimized state geometry
+        state_data = get_optimized_geometry(f"flaskapp/static/state/{state}.geojson")
         
-        # Clip to state geometry after all calculations
-        pollutant_mean = pollutant_mean.clip(state_geometry)
+        # Process pollutant data
+        masked_mean, stats, unit = process_pollutant_data(
+            state_data, pollutant, start_date, end_date
+        )
 
-        print(f"Step 5: Calculated mean and clipped in {time.time() - start_time:.2f} seconds")
+        # Extract min/max values
+        min_value = stats.get(f'{pollutant}_p5', None)
+        max_value = stats.get(f'{pollutant}_p95', None)
 
-        # Compute statistics
-        stats = pollutant_mean.reduceRegion(
-            reducer=ee.Reducer.percentile([5, 95]),
-            geometry=circle_geometry,  # Use circle geometry for stats
-            scale=5000,
-            maxPixels=1e9,
-            bestEffort=True
-        ).getInfo()
-
-        print(f"Step 6: Reduced region stats in {time.time() - start_time:.2f} seconds")
-
-        band_name = config['band']
-        min_value = stats.get(f'{band_name}_p5', 0)
-        max_value = stats.get(f'{band_name}_p95', 100)
+        if min_value is None or max_value is None:
+            return jsonify({'error': f'Could not calculate data range for {pollutant}.'}), 500
 
         if min_value == max_value:
-            min_value = max(0, min_value - 0.1 * abs(min_value))
-            max_value = max_value + 0.1 * abs(max_value)
+            min_value -= 0.1 * abs(min_value) or 0.1
+            max_value += 0.1 * abs(max_value) or 0.1
 
-        buffer_range = abs(max_value - min_value) * 0.1
-
-        # Generate visualization parameters
+        # Set visualization parameters
         if hml:
             vis_params = {
                 'min': min_value,
                 'max': max_value,
-                'palette': ['#0000FF', '#FFFF00', '#FF0000'],
-                'opacity': 0.7
+                'palette': ['blue', 'yellow', 'red']
             }
             legend_labels = ['Low', 'Medium', 'High']
         else:
+            buffer_range = abs(max_value - min_value) * 0.1
             vis_params = {
                 'min': min_value - buffer_range,
                 'max': max_value + buffer_range,
-                'palette': ['#0000FF', '#00FFFF', '#00FF00', '#FFFF00', '#FF0000'],
-                'opacity': 0.7
+                'palette': ['blue', 'cyan', 'green', 'yellow', 'red']
             }
             legend_labels = None
 
-        # Generate map tiles
-        map_id = pollutant_mean.getMapId(vis_params)
-        tile_url = map_id['tile_fetcher'].url_format
-
-        print(f"Step 7: Generated map tiles in {time.time() - start_time:.2f} seconds")
+        # Generate map
+        map_id = masked_mean.getMapId(vis_params)
 
         return jsonify({
-            'tile_url': tile_url,
+            'tile_url': map_id['tile_fetcher'].url_format,
             'min': f"{min_value:.2e}",
             'max': f"{max_value:.2e}",
             'min_raw': min_value,
             'max_raw': max_value,
-            'unit': config['unit'],
-            'legend_labels': legend_labels,
-            'processing_time': f"{time.time() - start_time:.2f} seconds"
+            'unit': unit,
+            'legend_labels': legend_labels
         })
 
     except Exception as e:
-        print(f"Error in get_pollutant_state: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-    # Return results
-    # return jsonify({
-    #     "mean_value": mean_value,
-    #     "tile_url": tile_url
-    # })
+@app.route('/api/get-pollutant-city', methods=['GET'])
+def get_pollutant_city():
+    try:
+        # Extract parameters
+        city = request.args.get('city')
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        pollutant = request.args.get('pollutant')
+        hml = request.args.get('hml', 'false').lower() == 'true'
+
+        if not all([city, start_date, end_date, pollutant]):
+            return jsonify({'error': 'Missing required parameters'}), 400
+
+        # Get optimized city geometry with smaller simplification error
+        city_data = get_optimized_geometry(
+            f"flaskapp/static/dissolved_output/dissolved_{city.upper()}.geojson",
+            simplify_error=100  # Smaller error for city boundaries
+        )
+        
+        # Process pollutant data with higher resolution for cities
+        masked_mean, stats, unit = process_pollutant_data(
+            city_data, pollutant, start_date, end_date, scale=1000  # Higher resolution for cities
+        )
+
+        # Extract min/max values
+        min_value = stats.get(f'{pollutant}_p5', None)
+        max_value = stats.get(f'{pollutant}_p95', None)
+
+        if min_value is None or max_value is None:
+            return jsonify({'error': f'Could not calculate data range for {pollutant}.'}), 500
+
+        if min_value == max_value:
+            min_value -= 0.1 * abs(min_value) or 0.1
+            max_value += 0.1 * abs(max_value) or 0.1
+
+        # Set visualization parameters
+        if hml:
+            vis_params = {
+                'min': min_value,
+                'max': max_value,
+                'palette': ['blue', 'yellow', 'red']
+            }
+            legend_labels = ['Low', 'Medium', 'High']
+        else:
+            buffer_range = abs(max_value - min_value) * 0.1
+            vis_params = {
+                'min': min_value - buffer_range,
+                'max': max_value + buffer_range,
+                'palette': ['blue', 'cyan', 'green', 'yellow', 'red']
+            }
+            legend_labels = None
+
+        # Generate map
+        map_id = masked_mean.getMapId(vis_params)
+
+        return jsonify({
+            'tile_url': map_id['tile_fetcher'].url_format,
+            'min': f"{min_value:.2e}",
+            'max': f"{max_value:.2e}",
+            'min_raw': min_value,
+            'max_raw': max_value,
+            'unit': unit,
+            'legend_labels': legend_labels
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # API route to get the Windy API key
 @app.route('/api/get-windy-api-key', methods=['GET'])
