@@ -9,7 +9,13 @@ app = Flask(__name__)
 from flask_caching import Cache
 from functools import lru_cache
 cache = Cache(app, config={'CACHE_TYPE': 'simple'})
-
+from datetime import datetime
+import re
+import nltk
+from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+import requests
 # Define the file paths
 file_path = r"D:\Download\SSTA-Smart-System-for-Tracking-Airpollution-main\SSTA-Smart-System-for-Tracking-Airpollution-main\flaskapp\config\creds2.json"
 default_path = "config/creds2.json"
@@ -901,6 +907,112 @@ def get_pollutant_city():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+@app.route('/api/get-time-series', methods=['GET'])
+def get_time_series():
+    try:
+        # Extract and validate input parameters
+        lat = request.args.get('lat', type=float)
+        lon = request.args.get('lon', type=float)
+        pollutant = request.args.get('pollutant')
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+
+        if not all([lat, lon, pollutant, start_date, end_date]):
+            return jsonify({'error': 'Missing required parameters.'}), 400
+
+        if pollutant not in POLLUTANT_CONFIGS:
+            return jsonify({'error': f'Invalid pollutant: {pollutant}'}), 400
+
+        # Create a point geometry with a small buffer to ensure data capture
+        point = ee.Geometry.Point([lon, lat]).buffer(1000)
+
+        # Get the pollutant configuration
+        config = POLLUTANT_CONFIGS[pollutant]
+
+        # Create the base collection
+        collection = ee.ImageCollection(config['collection'])\
+            .filterDate(start_date, end_date)\
+            .filterBounds(point)\
+            .select(config['band'])
+
+        # Debug: Log the collection size
+        collection_size = collection.size().getInfo()
+        print(f"Collection size: {collection_size}")
+
+        if collection_size == 0:
+            return jsonify({'error': 'No data available for the specified dates.'}), 404
+
+        # Get all unique dates in the collection
+        def get_image_date(image):
+            date = ee.Date(image.get('system:time_start'))
+            return ee.Feature(None, {'date': date.format('YYYY-MM-dd')})
+
+        dates = collection.map(get_image_date).distinct('date').aggregate_array('date').getInfo()
+        
+        # Process each image in the collection
+        def process_image(image):
+            date = ee.Date(image.get('system:time_start')).format('YYYY-MM-dd')
+            value = image.reduceRegion(
+                reducer=ee.Reducer.mean(),
+                geometry=point,
+                scale=1000,
+                maxPixels=1e9
+            ).get(config['band'])
+            
+            return ee.Feature(None, {
+                'date': date,
+                'value': value
+            })
+
+        features = collection.map(process_image)
+        time_series_data = features.getInfo().get('features', [])
+
+        # Process the data and apply scaling factors
+        series_data = []
+        for feature in time_series_data:
+            props = feature['properties']
+            value = props.get('value')
+            
+            if value is not None and not isinstance(value, str):  # Ensure value is numeric
+                if 'scale_factor' in config:
+                    value = value * config['scale_factor'] + config.get('offset', 0)
+                
+                # Round the value to 4 decimal places for cleaner data
+                value = round(float(value), 4)
+                
+                series_data.append({
+                    'date': props['date'],
+                    'value': value
+                })
+
+        # Sort the data by date
+        series_data.sort(key=lambda x: x['date'])
+
+        # Remove duplicates while keeping the first occurrence
+        seen_dates = set()
+        unique_series_data = []
+        for data_point in series_data:
+            if data_point['date'] not in seen_dates:
+                seen_dates.add(data_point['date'])
+                unique_series_data.append(data_point)
+
+        # Debug: Log the final series data
+        print(f"Number of data points: {len(unique_series_data)}")
+        print(f"Sample of series data: {unique_series_data[:5]}")
+
+        return jsonify({
+            'series': unique_series_data,
+            'unit': config.get('unit', 'unknown'),
+            'dates': dates
+        })
+
+    except ee.EEException as gee_error:
+        print(f"GEE Error: {str(gee_error)}")
+        return jsonify({'error': f'Google Earth Engine error: {str(gee_error)}'}), 500
+    except Exception as e:
+        print(f"General Error: {str(e)}")
+        return jsonify({'error': f'An unexpected error occurred: {str(e)}'}), 500
+
 
 # API route to get the Windy API key
 @app.route('/api/get-windy-api-key', methods=['GET'])
@@ -910,5 +1022,156 @@ def get_windy_api_key():
     else:
         return jsonify({'error': 'Windy API key not configured.'}), 500
 
+
+nltk.download('punkt')
+nltk.download('stopwords')
+nltk.download('wordnet')
+nltk.download('averaged_perceptron_tagger')
+
+class AirQualityChatbot:
+    def __init__(self, app):
+        self.app = app
+        self.lemmatizer = WordNetLemmatizer()
+        self.stop_words = set(stopwords.words('english'))
+        
+        # Define pollutant information
+        self.pollutant_info = {
+            'SO2': 'Sulfur dioxide (SO2) is a toxic gas with a pungent odor. It\'s primarily produced from the burning of fossil fuels containing sulfur.',
+            'NO2': 'Nitrogen dioxide (NO2) is a reddish-brown gas that primarily comes from the burning of fuel. It\'s a major air pollutant in urban areas.',
+            'CO': 'Carbon monoxide (CO) is a colorless, odorless gas that\'s produced by incomplete combustion of carbon-based fuels.',
+            'O3': 'Ozone (O3) at ground level is a harmful air pollutant and a key component of smog.',
+            'PM2.5': 'PM2.5 refers to fine particulate matter smaller than 2.5 micrometers in diameter. These particles can penetrate deep into the lungs.',
+            'PM10': 'PM10 refers to particulate matter up to 10 micrometers in size. These particles include dust, pollen, and mold.',
+            'HCHO': 'Formaldehyde (HCHO) is a colorless gas that can cause irritation to the eyes, nose, and throat.'
+        }
+        
+        # Define city coordinates (add more as needed)
+        self.city_coordinates = {
+            'hyderabad': {'lat': 17.3850, 'lon': 78.4867},
+            'srinagar': {'lat': 34.0837, 'lon': 74.7973},
+            'delhi': {'lat': 28.6139, 'lon': 77.2090},
+            'mumbai': {'lat': 19.0760, 'lon': 72.8777},
+            'bangalore': {'lat': 12.9716, 'lon': 77.5946}
+        }
+
+    def preprocess_text(self, text):
+        """Preprocess the input text."""
+        tokens = word_tokenize(text.lower())
+        tokens = [self.lemmatizer.lemmatize(token) for token in tokens if token not in self.stop_words]
+        return tokens
+
+    def extract_date_range(self, text):
+        """Extract date range from text."""
+        # Add more date patterns as needed
+        date_patterns = [
+            r'(\d{1,2}(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4})',
+            r'(\d{4}-\d{2}-\d{2})'
+        ]
+        
+        dates = []
+        for pattern in date_patterns:
+            found_dates = re.findall(pattern, text.lower())
+            dates.extend(found_dates)
+        
+        if len(dates) >= 2:
+            # Convert dates to consistent format
+            start_date = datetime.strptime(dates[0], '%d %B %Y').strftime('%Y-%m-%d')
+            end_date = datetime.strptime(dates[1], '%d %B %Y').strftime('%Y-%m-%d')
+            return start_date, end_date
+        return None, None
+
+    def extract_city(self, text):
+        """Extract city name from text."""
+        tokens = self.preprocess_text(text)
+        for city in self.city_coordinates.keys():
+            if city in tokens:
+                return city
+        return None
+
+    def extract_pollutant(self, text):
+        """Extract pollutant type from text."""
+        tokens = self.preprocess_text(text)
+        for pollutant in self.pollutant_info.keys():
+            if pollutant.lower() in tokens:
+                return pollutant
+        return None
+
+    def get_pollutant_data(self, city, pollutant, start_date, end_date):
+        """Get pollutant data using existing endpoints."""
+        with self.app.test_client() as client:
+            city_coords = self.city_coordinates[city]
+            response = client.get(f'/api/get-pollutant?lat={city_coords["lat"]}&lon={city_coords["lon"]}&pollutant={pollutant}&start_date={start_date}&end_date={end_date}')
+            return response.get_json()
+
+    def get_pollutant_stats(self, city, pollutant, start_date, end_date):
+        """Get statistical information about pollutant levels."""
+        data = self.get_pollutant_data(city, pollutant, start_date, end_date)
+        if 'error' in data:
+            return f"Sorry, I couldn't retrieve the data: {data['error']}"
+        
+        min_val = float(data['min'])
+        max_val = float(data['max'])
+        unit = data['unit']
+        
+        return {
+            'min': min_val,
+            'max': max_val,
+            'unit': unit,
+            'average': (min_val + max_val) / 2
+        }
+
+    def generate_response(self, user_input):
+        """Generate a response based on user input."""
+        # Extract key information
+        city = self.extract_city(user_input)
+        pollutant = self.extract_pollutant(user_input)
+        start_date, end_date = self.extract_date_range(user_input)
+
+        # Handle general pollutant information queries
+        if 'what is' in user_input.lower() and pollutant and not city:
+            return self.pollutant_info.get(pollutant, "I don't have information about that pollutant.")
+
+        # Handle data queries
+        if city and pollutant and start_date and end_date:
+            try:
+                stats = self.get_pollutant_stats(city, pollutant, start_date, end_date)
+                response = f"For {city.title()} between {start_date} and {end_date}:\n"
+                response += f"The {pollutant} levels ranged from {stats['min']:.2f} to {stats['max']:.2f} {stats['unit']}\n"
+                response += f"The average concentration was approximately {stats['average']:.2f} {stats['unit']}"
+                return response
+            except Exception as e:
+                return f"I apologize, but I encountered an error while retrieving the data: {str(e)}"
+
+        # Handle incomplete queries
+        missing_info = []
+        if not city:
+            missing_info.append("city")
+        if not pollutant:
+            missing_info.append("pollutant type")
+        if not start_date or not end_date:
+            missing_info.append("date range")
+        
+        if missing_info:
+            return f"I need more information to answer your question. Please specify the {', '.join(missing_info)}."
+
+        return "I'm not sure how to help with that query. Please try asking about specific pollutant levels in a city for a particular date range."
+
+# Add this new route to your Flask application
+@app.route('/api/chat', methods=['POST'])
+def chat():
+    try:
+        data = request.get_json()
+        user_message = data.get('message')
+        
+        if not user_message:
+            return jsonify({'error': 'No message provided'}), 400
+        
+        chatbot = AirQualityChatbot (app)
+        response = chatbot.generate_response(user_message)
+        
+        return jsonify({'response': response})
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 if __name__ == '__main__':
     app.run(debug=True)
