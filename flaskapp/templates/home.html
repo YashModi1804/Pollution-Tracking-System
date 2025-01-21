@@ -120,6 +120,39 @@
     color: #a0a0a0;
     cursor: not-allowed;
     }
+    #chatbot-container {
+        position: absolute;  /* Change from fixed to absolute */
+        top: 120px;         /* Position below the header */
+        left: 20px;         /* Distance from left edge */
+        width: 300px;       /* Fixed width instead of percentage */
+        height: 400px;      /* Fixed height */
+        background-color: white;
+        border-radius: 0.5rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        z-index: 1000;      /* Ensure it's above the map */
+        display: flex;
+        flex-direction: column;
+    }
+
+    #chat-messages {
+        flex-grow: 1;
+        overflow-y: auto;
+        padding: 1rem;
+    }
+
+    .chat-header {
+        padding: 0.75rem;
+        background-color: #2563eb;
+        color: white;
+        border-top-left-radius: 0.5rem;
+        border-top-right-radius: 0.5rem;
+    }
+
+    .chat-input-container {
+        padding: 0.75rem;
+        border-top: 1px solid #e5e7eb;
+        background-color: white;
+    }
 
   </style>
 </head>
@@ -177,7 +210,7 @@
             <option value="Hyderabad" selected>Hyderabad</option>
             <option value="Pune">Pune</option>
             <option value="Ahmedabad">Ahmedabad</option>
-            <option value="Jaipur">Jaipur</option>
+            <!-- <option value="Jaipur">Jaipur</option> -->
             <option value="Lucknow">Lucknow</option>
             <option value="Surat">Surat</option>
             <option value="Kanpur">Kanpur</option>
@@ -283,7 +316,7 @@
           <select id="pollutant" name="pollutant" class="w-full bg-gray-100 bg-opacity-50 rounded border border-gray-300 focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-200 text-xs outline-none text-gray-700 py-1 px-2 leading-6 transition-colors duration-200 ease-in-out">
             <option value="CO">CO</option>
             <option value="NO2">NO2</option>
-            <option value="PM2.5">PM2.5</option>
+            <!-- <option value="PM2.5">PM2.5</option> -->
             <option value="PM10">PM10</option>
             <option value="SO2">SO2</option>
             <option value="O3">O3</option>
@@ -318,7 +351,7 @@
     <!-- Legend -->
     <div id="legend" class="legend"></div>
     <div id="concentration-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50">
-      <div class="bg-white p-4 rounded-lg shadow-lg w-3/4 max-w-3xl">
+      <div class="bg-white p-4 rounded-lg shadow-lg w-3/4 max-w-3xl relative">
         <div class="flex justify-between items-center mb-4">
           <h3 class="text-lg font-semibold">Concentration Time Series</h3>
           <button id="close-modal" class="text-gray-500 hover:text-gray-700">
@@ -327,27 +360,33 @@
             </svg>
           </button>
         </div>
+        <!-- Ensure the container is relative -->
+        <img src="{{ url_for('static', filename='isro.png') }}" alt="Logo" class="logo absolute top-4 left-4 w-12 h-12">
         <div id="concentration-chart" class="h-96"></div>
       </div>
-    </div>
-    <!-- Add this to your HTML file -->
-<div id="chatbot-container" class="fixed bottom-4 right-4 w-80 bg-white shadow-lg rounded-lg overflow-hidden">
-  <div class="bg-blue-600 text-white p-3">
-      <h3 class="text-lg font-semibold">Air Quality Assistant</h3>
-  </div>
-  <div id="chat-messages" class="h-96 overflow-y-auto p-4 space-y-4"></div>
-  <div class="border-t p-4">
-      <div class="flex space-x-2">
-          <input type="text" id="user-input" 
-                 class="flex-1 border rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500"
-                 placeholder="Ask about air quality...">
-          <button onclick="sendMessage()" 
-                  class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
-              Send
-          </button>
-      </div>
-  </div>
 </div>
+
+    <!-- Add this to your HTML file -->
+    <!-- <div id="chatbot-container">
+      <div class="chat-header">
+          <h3 class="text-lg font-semibold">Air Quality Assistant</h3>
+      </div>
+      
+      <div id="chat-messages" class="space-y-4"></div>
+      
+      <div class="chat-input-container">
+          <div class="flex space-x-2">
+              <input type="text" id="user-input" 
+                  class="flex-1 border rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500"
+                  placeholder="Ask about air quality...">
+              <button onclick="sendMessage()" 
+                  class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+                  Send
+              </button>
+          </div>
+      </div>
+  </div> -->
+
   </section>
 
   <!-- Leaflet JS -->
@@ -571,6 +610,24 @@ L.tileLayer.wms('https://bhuvan-vec1.nrsc.gov.in/bhuvan/gwc/service/wms?', {
       });
   }
 }
+function calculateMovingAverage(data, window = 7) {
+  const movingAverages = [];
+  for (let i = 0; i < data.length; i++) {
+    let sum = 0;
+    let count = 0;
+    // Look back (window-1) days and include current day
+    for (let j = Math.max(0, i - (window - 1)); j <= i; j++) {
+      sum += data[j].value;
+      count++;
+    }
+    movingAverages.push({
+      date: data[i].date,
+      value: sum / count
+    });
+  }
+  return movingAverages;
+}
+
 //state boundaries
 
 function loadStateBoundary() {
@@ -994,24 +1051,40 @@ function loadStateBoundary() {
 });
 function renderConcentrationChart(data) {
   const chartContainer = document.getElementById('concentration-chart');
-  
+  const pollutant = document.getElementById("pollutant").value; // Get pollutant name
+
   // Clear the chart container before rendering the new chart
   chartContainer.innerHTML = '';
 
   const ctx = document.createElement('canvas');
   chartContainer.appendChild(ctx);
 
+  // Calculate 7-day moving average if we have more than 7 data points
+  const datasets = [{
+    label: `Concentration (${data.unit})`,
+    data: data.series.map(item => item.value),
+    borderColor: '#8884d8',
+    borderWidth: 1,
+    fill: false
+  }];
+
+  if (data.series.length > 7) {
+    const movingAverages = calculateMovingAverage(data.series);
+    datasets.push({
+      label: '7-day Moving Average',
+      data: movingAverages.map(item => item.value),
+      borderColor: '#ff0000',
+      borderWidth: 2,
+      fill: false,
+      borderDash: [5, 5] // Optional: makes the line dashed
+    });
+  }
+
   new Chart(ctx, {
     type: 'line',
     data: {
       labels: data.series.map(item => item.date),
-      datasets: [{
-        label: `Concentration (${data.unit})`,
-        data: data.series.map(item => item.value),
-        borderColor: '#8884d8',
-        borderWidth: 2,
-        fill: false,
-      }]
+      datasets: datasets
     },
     options: {
       responsive: true,
@@ -1029,10 +1102,39 @@ function renderConcentrationChart(data) {
             text: `Concentration (${data.unit})`
           }
         }
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top'
+        },
+        tooltip: {
+          mode: 'index',
+          intersect: false
+        },
+        title: {
+          display: true,
+          text: `${pollutant} Concentration Over Time`, // Add pollutant name to chart title
+          font: {
+            size: 16
+          }
+        },
+        subtitle: {
+          display: true,
+          text: `Unit: ${data.unit}`, // Optional: Add a subtitle if you want more context
+          font: {
+            size: 12,
+            style: 'italic'
+          },
+          padding: {
+            bottom: 10
+          }
+        }
       }
     }
   });
 }
+
 document.getElementById('close-modal').addEventListener('click', function () {
   document.getElementById('concentration-modal').classList.add('hidden');
 });
@@ -1167,25 +1269,40 @@ document.getElementById('close-modal').addEventListener('click', function() {
 
 function renderConcentrationChart(data) {
   const chartContainer = document.getElementById('concentration-chart');
-  
+  const pollutant = document.getElementById("pollutant").value; // Get pollutant name
+
   // Clear the chart container before rendering the new chart
   chartContainer.innerHTML = '';
 
-  // Use a charting library like Chart.js or D3.js for rendering, since Recharts works only with React.
   const ctx = document.createElement('canvas');
   chartContainer.appendChild(ctx);
+
+  // Calculate 7-day moving average if we have more than 7 data points
+  const datasets = [{
+    label: `Concentration (${data.unit})`,
+    data: data.series.map(item => item.value),
+    borderColor: '#8884d8',
+    borderWidth: 1,
+    fill: false
+  }];
+
+  if (data.series.length > 7) {
+    const movingAverages = calculateMovingAverage(data.series);
+    datasets.push({
+      label: '7-day Moving Average',
+      data: movingAverages.map(item => item.value),
+      borderColor: '#ff0000',
+      borderWidth: 2,
+      fill: false,
+      borderDash: [5, 5] // Optional: makes the line dashed
+    });
+  }
 
   new Chart(ctx, {
     type: 'line',
     data: {
       labels: data.series.map(item => item.date),
-      datasets: [{
-        label: `Concentration (${data.unit})`,
-        data: data.series.map(item => item.value),
-        borderColor: '#8884d8',
-        borderWidth: 2,
-        fill: false,
-      }]
+      datasets: datasets
     },
     options: {
       responsive: true,
@@ -1203,15 +1320,53 @@ function renderConcentrationChart(data) {
             text: `Concentration (${data.unit})`
           }
         }
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top'
+        },
+        tooltip: {
+          mode: 'index',
+          intersect: false
+        },
+        title: {
+          display: true,
+          text: `${pollutant} Concentration Over Time`, // Add pollutant name to chart title
+          font: {
+            size: 16
+          }
+        },
+        subtitle: {
+          display: true,
+          text: `Unit: ${data.unit}`, // Optional: Add a subtitle if you want more context
+          font: {
+            size: 12,
+            style: 'italic'
+          },
+          padding: {
+            bottom: 10
+          }
+        }
       }
     }
   });
 }
 
+// document.getElementById('close-modal').addEventListener('click', function () {
+//   document.getElementById('concentration-modal').classList.add('hidden');
+// });
+
         
 
         // Update Legend
-        updateLegend(data.min_raw, data.max_raw, data.unit, data.legend_labels);
+        updateLegend(
+    parseFloat(data.min_raw.toFixed(2)), // Rounds min_raw to 2 decimal places
+    parseFloat(data.max_raw.toFixed(2)), // Rounds max_raw to 2 decimal places
+    data.unit,
+    data.legend_labels
+);
+
       });
     }
     else{
@@ -1281,24 +1436,40 @@ function renderConcentrationChart(data) {
 });
 function renderConcentrationChart(data) {
   const chartContainer = document.getElementById('concentration-chart');
-  
+  const pollutant = document.getElementById("pollutant").value; // Get pollutant name
+
   // Clear the chart container before rendering the new chart
   chartContainer.innerHTML = '';
 
   const ctx = document.createElement('canvas');
   chartContainer.appendChild(ctx);
 
+  // Calculate 7-day moving average if we have more than 7 data points
+  const datasets = [{
+    label: `Concentration (${data.unit})`,
+    data: data.series.map(item => item.value),
+    borderColor: '#8884d8',
+    borderWidth: 1,
+    fill: false
+  }];
+
+  if (data.series.length > 7) {
+    const movingAverages = calculateMovingAverage(data.series);
+    datasets.push({
+      label: '7-day Moving Average',
+      data: movingAverages.map(item => item.value),
+      borderColor: '#ff0000',
+      borderWidth: 2,
+      fill: false,
+      borderDash: [5, 5] // Optional: makes the line dashed
+    });
+  }
+
   new Chart(ctx, {
     type: 'line',
     data: {
       labels: data.series.map(item => item.date),
-      datasets: [{
-        label: `Concentration (${data.unit})`,
-        data: data.series.map(item => item.value),
-        borderColor: '#8884d8',
-        borderWidth: 2,
-        fill: false,
-      }]
+      datasets: datasets
     },
     options: {
       responsive: true,
@@ -1316,10 +1487,39 @@ function renderConcentrationChart(data) {
             text: `Concentration (${data.unit})`
           }
         }
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top'
+        },
+        tooltip: {
+          mode: 'index',
+          intersect: false
+        },
+        title: {
+          display: true,
+          text: `${pollutant} Concentration Over Time`, // Add pollutant name to chart title
+          font: {
+            size: 16
+          }
+        },
+        subtitle: {
+          display: true,
+          text: `Unit: ${data.unit}`, // Optional: Add a subtitle if you want more context
+          font: {
+            size: 12,
+            style: 'italic'
+          },
+          padding: {
+            bottom: 10
+          }
+        }
       }
     }
   });
 }
+
 document.getElementById('close-modal').addEventListener('click', function () {
   document.getElementById('concentration-modal').classList.add('hidden');
 });

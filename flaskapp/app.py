@@ -46,7 +46,24 @@ except Exception as e:
     print("Skipping Google API authentication for local testing:", e)
     credentials = None
 
+def initialize_nltk():
+    """Initialize NLTK by downloading required resources with error handling."""
+    required_resources = ['punkt', 'stopwords', 'wordnet', 'averaged_perceptron_tagger']
+    
+    for resource in required_resources:
+        try:
+            nltk.data.find(f'tokenizers/{resource}')
+        except LookupError:
+            try:
+                nltk.download(resource, quiet=True)
+                print(f"Successfully downloaded {resource}")
+            except Exception as e:
+                print(f"Error downloading {resource}: {str(e)}")
+                # Continue with reduced functionality if download fails
+                pass
 
+# Call NLTK initialization at startup
+initialize_nltk()
 # Function to adjust units based on data range
 def adjust_units(min_value, max_value, base_unit):
     prefixes = {
@@ -694,24 +711,28 @@ POLLUTANT_CONFIGS = {
         'band': 'Optical_Depth_055',
         'scale_factor': 206.91,
         'offset': 41.181,
-        'unit': 'μg/m³'
+        'unit': 'kµg/m³'
     },
     'PM10': {
-        'collection': 'MODIS/061/MCD19A2_GRANULES',
-        'band': 'Optical_Depth_055',
-        'scale_factor': 171.58,  # Conversion factor for PM10
-        'offset': 57.892,        # Offset for PM10
+        'collection': 'COPERNICUS/S5P/NRTI/L3_AER_AI',
+        'band': 'absorbing_aerosol_index',
+        'scale_factor': 50,  # Conversion factor for PM10
+        'offset': 20,        # Offset for PM10
         'unit': 'μg/m³'
     },
     'NO2': {
         'collection': 'COPERNICUS/S5P/NRTI/L3_NO2',
         'band': 'NO2_column_number_density',
-        'unit': 'mol/m²'
+        'unit': 'μmol/m²',
+        'scale_factor':1000000,
+        'offset':0,
     },
     'CO': {
         'collection': 'COPERNICUS/S5P/NRTI/L3_CO',
         'band': 'CO_column_number_density',
-        'unit': 'mol/m²'
+        'unit': 'ppb',
+        'scale_factor':3000,
+        'offset':0
     },
     'SO2': {
         'collection': 'COPERNICUS/S5P/NRTI/L3_SO2',
@@ -722,6 +743,14 @@ POLLUTANT_CONFIGS = {
         'collection': 'COPERNICUS/S5P/NRTI/L3_O3',
         'band': 'O3_column_number_density',
         'unit': 'mol/m²'
+    },
+    'HCHO': {
+        'collection': 'COPERNICUS/S5P/NRTI/L3_HCHO',
+        'band': 'tropospheric_HCHO_column_number_density',
+        'scale_factor':100000,
+        'offset':0,
+        'unit': 'μmol/m²'
+
     }
 }
 
@@ -762,6 +791,7 @@ def process_pollutant_data(geometry_data, pollutant, start_date, end_date, scale
 
     # Create and apply mask
     mask = ee.Image.constant(1).clip(geometry).mask()
+    
     masked_mean = mean_image.updateMask(mask).rename(pollutant)
 
     # Calculate statistics
@@ -1031,8 +1061,14 @@ nltk.download('averaged_perceptron_tagger')
 class AirQualityChatbot:
     def __init__(self, app):
         self.app = app
-        self.lemmatizer = WordNetLemmatizer()
-        self.stop_words = set(stopwords.words('english'))
+        try:
+            self.lemmatizer = WordNetLemmatizer()
+            self.stop_words = set(stopwords.words('english'))
+        except LookupError:
+            # Fallback if NLTK data is not available
+            self.lemmatizer = lambda x: x  # Simple pass-through function
+            self.stop_words = set()
+            print("Warning: NLTK resources not fully available. ")
         
         # Define pollutant information
         self.pollutant_info = {
@@ -1055,10 +1091,15 @@ class AirQualityChatbot:
         }
 
     def preprocess_text(self, text):
-        """Preprocess the input text."""
-        tokens = word_tokenize(text.lower())
-        tokens = [self.lemmatizer.lemmatize(token) for token in tokens if token not in self.stop_words]
-        return tokens
+        """Preprocess the input text with error handling."""
+        try:
+            tokens = word_tokenize(text.lower())
+            tokens = [self.lemmatizer.lemmatize(token) for token in tokens if token not in self.stop_words]
+            return tokens
+        except Exception as e:
+            print(f"Error in text preprocessing: {str(e)}")
+            # Fallback to simple tokenization
+            return text.lower().split()
 
     def extract_date_range(self, text):
         """Extract date range from text."""
