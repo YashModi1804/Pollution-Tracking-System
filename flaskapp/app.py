@@ -709,8 +709,8 @@ POLLUTANT_CONFIGS = {
     'PM2.5': {
         'collection': 'MODIS/061/MCD19A2_GRANULES',
         'band': 'Optical_Depth_055',
-        'scale_factor': 206.91,
-        'offset': 41.181,
+        'scale_factor': 0.20691,
+        'offset': 0,
         'unit': 'kµg/m³'
     },
     'PM10': {
@@ -738,19 +738,21 @@ POLLUTANT_CONFIGS = {
         'collection': 'COPERNICUS/S5P/NRTI/L3_SO2',
         'band': 'SO2_column_number_density',
         'unit': 'μmol/m²',
-        'scale_factor':1000,
+        'scale_factor':1000000,
         'offset':0
 
     },
     'O3': {
         'collection': 'COPERNICUS/S5P/NRTI/L3_O3',
         'band': 'O3_column_number_density',
-        'unit': 'mol/m²'
+        'unit': 'mmol/m²',
+        'scale_factor':1000,
+        'offset':0
     },
     'HCHO': {
         'collection': 'COPERNICUS/S5P/NRTI/L3_HCHO',
         'band': 'tropospheric_HCHO_column_number_density',
-        'scale_factor':100000,
+        'scale_factor':1000000,
         'offset':0,
         'unit': 'μmol/m²'
 
@@ -770,7 +772,7 @@ def get_optimized_geometry(geojson_path, simplify_error=1000):
         'bounds': bounds
     }
 
-def process_pollutant_data(geometry_data, pollutant, start_date, end_date, scale=2000):
+def process_pollutant_data(geometry_data, pollutant, start_date, end_date, scale=1000):
     """Process pollutant data for a given geometry with negative value masking."""
     if pollutant not in POLLUTANT_CONFIGS:
         raise ValueError(f'Unsupported pollutant: {pollutant}')
@@ -800,15 +802,16 @@ def process_pollutant_data(geometry_data, pollutant, start_date, end_date, scale
         if 'offset' in config:
             mean_image = mean_image.add(config['offset'])
 
-    # Create and apply mask
-    mask = ee.Image.constant(1).clip(geometry).mask()
-    
-    masked_mean = mean_image.updateMask(mask).rename(pollutant)
+    # Clip the image to the geometry
+    if pollutant == 'PM2.5':
+        masked_mean = mean_image.clip(geometry).rename('PM2_5')  # Rename to PM2_5
+    else:
+        masked_mean = mean_image.clip(geometry).rename(pollutant)
 
     # Calculate statistics
     stats = masked_mean.reduceRegion(
         reducer=ee.Reducer.percentile([5, 95]),
-        geometry=bounds,
+        geometry=geometry,
         scale=scale,
         maxPixels=1e8,
         bestEffort=True
@@ -893,20 +896,21 @@ def get_pollutant_city():
         if not all([city, start_date, end_date, pollutant]):
             return jsonify({'error': 'Missing required parameters'}), 400
 
-        # Get optimized city geometry with smaller simplification error
+        # Get optimized city geometry
         city_data = get_optimized_geometry(
             f"flaskapp/static/dissolved_output/dissolved_{city.upper()}.geojson",
             simplify_error=100  # Smaller error for city boundaries
         )
         
-        # Process pollutant data with higher resolution for cities
+        # Process pollutant data
         masked_mean, stats, unit = process_pollutant_data(
             city_data, pollutant, start_date, end_date, scale=1000  # Higher resolution for cities
         )
 
         # Extract min/max values
-        min_value = stats.get(f'{pollutant}_p5', None)
-        max_value = stats.get(f'{pollutant}_p95', None)
+        band_name = 'PM2_5' if pollutant == 'PM2.5' else pollutant  # Use PM2_5 for PM2.5
+        min_value = stats.get(f'{band_name}_p5', None)
+        max_value = stats.get(f'{band_name}_p95', None)
 
         if min_value is None or max_value is None:
             return jsonify({'error': f'Could not calculate data range for {pollutant}.'}), 500
@@ -998,12 +1002,17 @@ def get_time_series():
         # Process each image in the collection
         def process_image(image):
             date = ee.Date(image.get('system:time_start')).format('YYYY-MM-dd')
+            
+            # Determine the correct band name
+            band_name = config['band']  # Use the default band from configuration
+            
+            # Safely get the value using the selected band
             value = image.reduceRegion(
                 reducer=ee.Reducer.mean(),
                 geometry=point,
                 scale=1000,
                 maxPixels=1e9
-            ).get(config['band'])
+            ).get(band_name)
             
             return ee.Feature(None, {
                 'date': date,
