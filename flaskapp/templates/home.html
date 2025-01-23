@@ -153,6 +153,12 @@
         border-top: 1px solid #e5e7eb;
         background-color: white;
     }
+    .loader {
+    font-style: italic;
+    color: #888;
+    padding: 10px;
+}
+
 
   </style>
 </head>
@@ -316,7 +322,7 @@
           <select id="pollutant" name="pollutant" class="w-full bg-gray-100 bg-opacity-50 rounded border border-gray-300 focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-200 text-xs outline-none text-gray-700 py-1 px-2 leading-6 transition-colors duration-200 ease-in-out">
             <option value="CO">CO</option>
             <option value="NO2">NO2</option>
-            <!-- <option value="PM2.5">PM2.5</option> -->
+            <option value="PM2.5">PM2.5</option>
             <option value="PM10">PM10</option>
             <option value="SO2">SO2</option>
             <option value="O3">O3</option>
@@ -345,7 +351,11 @@
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
           </svg>
         </button>
+        <button id="toggle-chatbot-btn" onclick="toggleChatbot()" class="inline-flex items-center justify-center text-white bg-indigo-500 border-0 py-2 px-4 focus:outline-none hover:bg-indigo-600 rounded text-sm mt-2 w-full">
+          Toggle Chatbot
+        </button>
       </div>
+      
     </div>
 
     <!-- Legend -->
@@ -366,8 +376,7 @@
       </div>
 </div>
 
-    <!-- Add this to your HTML file -->
-    <!-- <div id="chatbot-container">
+    <div id="chatbot-container">
       <div class="chat-header">
           <h3 class="text-lg font-semibold">Air Quality Assistant</h3>
       </div>
@@ -385,7 +394,7 @@
               </button>
           </div>
       </div>
-  </div> -->
+  </div>
 
   </section>
 
@@ -456,6 +465,7 @@ L.tileLayer.wms('https://bhuvan-vec1.nrsc.gov.in/bhuvan/gwc/service/wms?', {
   const cityDropdown = document.getElementById('city');
   const stateDropdown = document.getElementById('state');
 
+  
   const updateDropdownState = () => {
     if (cityBoundaryRadio.checked) {
       cityDropdown.disabled = false;
@@ -554,6 +564,7 @@ L.tileLayer.wms('https://bhuvan-vec1.nrsc.gov.in/bhuvan/gwc/service/wms?', {
       });
         // Function to add the city boundary layer (for the selected city)
   // Function to add the city boundary layer (for the selected city)
+  
   function addCityBoundaryLayer() {
   const showConcentrationBtn = document.getElementById("show-concentration-btn");
   const loadingSpinner = document.getElementById("loading-spinner");
@@ -1584,7 +1595,6 @@ function updateLegend(minValue, maxValue, unit, legendLabels) {
         }
       });
     });
-    // Add this to your JavaScript file
 function appendMessage(message, isUser = false) {
     const chatMessages = document.getElementById('chat-messages');
     const messageDiv = document.createElement('div');
@@ -1602,13 +1612,20 @@ function appendMessage(message, isUser = false) {
 async function sendMessage() {
     const input = document.getElementById('user-input');
     const message = input.value.trim();
-    
+    const chatContainer = document.getElementById('chat-messages'); // Assuming this is where messages are displayed
+
     if (!message) return;
-    
+
     // Display user message
     appendMessage(message, true);
     input.value = '';
-    
+
+    // Display loader
+    const loader = document.createElement('div');
+    loader.className = 'loader'; // Use a class for styling
+    loader.innerText = 'Typing...'; // You can replace this with a spinner or animation
+    chatContainer.appendChild(loader);
+
     try {
         const response = await fetch('/api/chat', {
             method: 'POST',
@@ -1617,17 +1634,23 @@ async function sendMessage() {
             },
             body: JSON.stringify({ message })
         });
-        
+
         const data = await response.json();
-        
+        chatContainer.removeChild(loader); // Remove the loader after getting a response
+
         if (data.error) {
             appendMessage('Sorry, I encountered an error: ' + data.error);
         } else {
             appendMessage(data.response);
         }
     } catch (error) {
+        chatContainer.removeChild(loader); // Remove the loader in case of an error
         appendMessage('Sorry, I encountered an error while processing your request.');
     }
+}
+function toggleChatbot() {
+    const chatbotContainer = document.getElementById('chatbot-container');
+    chatbotContainer.style.display = chatbotContainer.style.display === 'none' ? 'flex' : 'none';
 }
 
 // Handle Enter key
@@ -1636,6 +1659,7 @@ document.getElementById('user-input').addEventListener('keypress', function(e) {
         sendMessage();
     }
 });
+
   </script>
 </body>
 </html>

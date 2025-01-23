@@ -737,7 +737,10 @@ POLLUTANT_CONFIGS = {
     'SO2': {
         'collection': 'COPERNICUS/S5P/NRTI/L3_SO2',
         'band': 'SO2_column_number_density',
-        'unit': 'mol/m²'
+        'unit': 'μmol/m²',
+        'scale_factor':1000,
+        'offset':0
+
     },
     'O3': {
         'collection': 'COPERNICUS/S5P/NRTI/L3_O3',
@@ -768,7 +771,7 @@ def get_optimized_geometry(geojson_path, simplify_error=1000):
     }
 
 def process_pollutant_data(geometry_data, pollutant, start_date, end_date, scale=2000):
-    """Process pollutant data for a given geometry."""
+    """Process pollutant data for a given geometry with negative value masking."""
     if pollutant not in POLLUTANT_CONFIGS:
         raise ValueError(f'Unsupported pollutant: {pollutant}')
 
@@ -782,12 +785,20 @@ def process_pollutant_data(geometry_data, pollutant, start_date, end_date, scale
         .filterDate(start_date, end_date) \
         .select(config['band'])
 
+    # Add negative value masking
+    def mask_negative_values(image):
+        return image.updateMask(image.gte(0))
+    
+    collection = collection.map(mask_negative_values)
+
     # Calculate mean
     mean_image = collection.mean()
     
     # Apply scale factor and offset if specified
     if 'scale_factor' in config:
-        mean_image = mean_image.multiply(config['scale_factor']).add(config['offset'])
+        mean_image = mean_image.multiply(config['scale_factor'])
+        if 'offset' in config:
+            mean_image = mean_image.add(config['offset'])
 
     # Create and apply mask
     mask = ee.Image.constant(1).clip(geometry).mask()
@@ -804,7 +815,6 @@ def process_pollutant_data(geometry_data, pollutant, start_date, end_date, scale
     ).getInfo()
 
     return masked_mean, stats, config['unit']
-
 @app.route('/api/get-pollutant-state', methods=['GET'])
 def get_pollutant_state():
     try:
@@ -965,6 +975,12 @@ def get_time_series():
             .filterBounds(point)\
             .select(config['band'])
 
+        # Add negative value masking
+        def mask_negative_values(image):
+            return image.updateMask(image.gte(0))
+        
+        collection = collection.map(mask_negative_values)
+
         # Debug: Log the collection size
         collection_size = collection.size().getInfo()
         print(f"Collection size: {collection_size}")
@@ -1003,17 +1019,18 @@ def get_time_series():
             props = feature['properties']
             value = props.get('value')
             
-            if value is not None and not isinstance(value, str):  # Ensure value is numeric
-                if 'scale_factor' in config:
-                    value = value * config['scale_factor'] + config.get('offset', 0)
-                
-                # Round the value to 4 decimal places for cleaner data
-                value = round(float(value), 4)
-                
-                series_data.append({
-                    'date': props['date'],
-                    'value': value
-                })
+            if value is not None and not isinstance(value, str):  # Ensure value is numeric and not None
+                if value >= 0:  # Additional check for negative values
+                    if 'scale_factor' in config:
+                        value = value * config['scale_factor'] + config.get('offset', 0)
+                    
+                    # Round the value to 4 decimal places for cleaner data
+                    value = round(float(value), 4)
+                    
+                    series_data.append({
+                        'date': props['date'],
+                        'value': value
+                    })
 
         # Sort the data by date
         series_data.sort(key=lambda x: x['date'])
@@ -1025,10 +1042,6 @@ def get_time_series():
             if data_point['date'] not in seen_dates:
                 seen_dates.add(data_point['date'])
                 unique_series_data.append(data_point)
-
-        # Debug: Log the final series data
-        print(f"Number of data points: {len(unique_series_data)}")
-        print(f"Sample of series data: {unique_series_data[:5]}")
 
         return jsonify({
             'series': unique_series_data,
@@ -1042,7 +1055,6 @@ def get_time_series():
     except Exception as e:
         print(f"General Error: {str(e)}")
         return jsonify({'error': f'An unexpected error occurred: {str(e)}'}), 500
-
 
 # API route to get the Windy API key
 @app.route('/api/get-windy-api-key', methods=['GET'])
@@ -1065,23 +1077,20 @@ class AirQualityChatbot:
             self.lemmatizer = WordNetLemmatizer()
             self.stop_words = set(stopwords.words('english'))
         except LookupError:
-            # Fallback if NLTK data is not available
             self.lemmatizer = lambda x: x  # Simple pass-through function
             self.stop_words = set()
-            print("Warning: NLTK resources not fully available. ")
+            print("Warning: NLTK resources not fully available.")
         
-        # Define pollutant information
         self.pollutant_info = {
             'SO2': 'Sulfur dioxide (SO2) is a toxic gas with a pungent odor. It\'s primarily produced from the burning of fossil fuels containing sulfur.',
-            'NO2': 'Nitrogen dioxide (NO2) is a reddish-brown gas that primarily comes from the burning of fuel. It\'s a major air pollutant in urban areas.',
+            'NO2': 'Nitrogen dioxide (NO2) is a reddish-brown gas that primarily comes from the burning of fuel.',
             'CO': 'Carbon monoxide (CO) is a colorless, odorless gas that\'s produced by incomplete combustion of carbon-based fuels.',
             'O3': 'Ozone (O3) at ground level is a harmful air pollutant and a key component of smog.',
-            'PM2.5': 'PM2.5 refers to fine particulate matter smaller than 2.5 micrometers in diameter. These particles can penetrate deep into the lungs.',
-            'PM10': 'PM10 refers to particulate matter up to 10 micrometers in size. These particles include dust, pollen, and mold.',
+            'PM2.5': 'PM2.5 refers to fine particulate matter smaller than 2.5 micrometers in diameter.',
+            'PM10': 'PM10 refers to particulate matter up to 10 micrometers in size.',
             'HCHO': 'Formaldehyde (HCHO) is a colorless gas that can cause irritation to the eyes, nose, and throat.'
         }
-        
-        # Define city coordinates (add more as needed)
+
         self.city_coordinates = {
             'hyderabad': {'lat': 17.3850, 'lon': 78.4867},
             'srinagar': {'lat': 34.0837, 'lon': 74.7973},
@@ -1091,22 +1100,19 @@ class AirQualityChatbot:
         }
 
     def preprocess_text(self, text):
-        """Preprocess the input text with error handling."""
         try:
             tokens = word_tokenize(text.lower())
             tokens = [self.lemmatizer.lemmatize(token) for token in tokens if token not in self.stop_words]
             return tokens
         except Exception as e:
             print(f"Error in text preprocessing: {str(e)}")
-            # Fallback to simple tokenization
             return text.lower().split()
 
     def extract_date_range(self, text):
-        """Extract date range from text."""
-        # Add more date patterns as needed
         date_patterns = [
             r'(\d{1,2}(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4})',
-            r'(\d{4}-\d{2}-\d{2})'
+            r'(\d{2}/\d{2}/\d{4})',  # e.g., 01/01/2024
+            r'(\d{4}-\d{2}-\d{2})'   # e.g., 2024-01-01
         ]
         
         dates = []
@@ -1115,14 +1121,23 @@ class AirQualityChatbot:
             dates.extend(found_dates)
         
         if len(dates) >= 2:
-            # Convert dates to consistent format
-            start_date = datetime.strptime(dates[0], '%d %B %Y').strftime('%Y-%m-%d')
-            end_date = datetime.strptime(dates[1], '%d %B %Y').strftime('%Y-%m-%d')
-            return start_date, end_date
+            try:
+                if "/" in dates[0]:
+                    start_date = datetime.strptime(dates[0], '%d/%m/%Y').strftime('%Y-%m-%d')
+                else:
+                    start_date = datetime.strptime(dates[0], '%d %B %Y').strftime('%Y-%m-%d')
+                
+                if "/" in dates[1]:
+                    end_date = datetime.strptime(dates[1], '%d/%m/%Y').strftime('%Y-%m-%d')
+                else:
+                    end_date = datetime.strptime(dates[1], '%d %B %Y').strftime('%Y-%m-%d')
+
+                return start_date, end_date
+            except Exception as e:
+                print(f"Error in date conversion: {e}")
         return None, None
 
     def extract_city(self, text):
-        """Extract city name from text."""
         tokens = self.preprocess_text(text)
         for city in self.city_coordinates.keys():
             if city in tokens:
@@ -1130,7 +1145,6 @@ class AirQualityChatbot:
         return None
 
     def extract_pollutant(self, text):
-        """Extract pollutant type from text."""
         tokens = self.preprocess_text(text)
         for pollutant in self.pollutant_info.keys():
             if pollutant.lower() in tokens:
@@ -1138,7 +1152,7 @@ class AirQualityChatbot:
         return None
 
     def get_pollutant_data(self, city, pollutant, start_date, end_date):
-        """Get pollutant data using existing endpoints."""
+        """Fetch pollutant data from an API endpoint."""
         with self.app.test_client() as client:
             city_coords = self.city_coordinates[city]
             response = client.get(f'/api/get-pollutant?lat={city_coords["lat"]}&lon={city_coords["lon"]}&pollutant={pollutant}&start_date={start_date}&end_date={end_date}')
@@ -1162,17 +1176,13 @@ class AirQualityChatbot:
         }
 
     def generate_response(self, user_input):
-        """Generate a response based on user input."""
-        # Extract key information
         city = self.extract_city(user_input)
         pollutant = self.extract_pollutant(user_input)
         start_date, end_date = self.extract_date_range(user_input)
 
-        # Handle general pollutant information queries
         if 'what is' in user_input.lower() and pollutant and not city:
             return self.pollutant_info.get(pollutant, "I don't have information about that pollutant.")
 
-        # Handle data queries
         if city and pollutant and start_date and end_date:
             try:
                 stats = self.get_pollutant_stats(city, pollutant, start_date, end_date)
@@ -1183,7 +1193,6 @@ class AirQualityChatbot:
             except Exception as e:
                 return f"I apologize, but I encountered an error while retrieving the data: {str(e)}"
 
-        # Handle incomplete queries
         missing_info = []
         if not city:
             missing_info.append("city")
@@ -1197,7 +1206,7 @@ class AirQualityChatbot:
 
         return "I'm not sure how to help with that query. Please try asking about specific pollutant levels in a city for a particular date range."
 
-# Add this new route to your Flask application
+# Route to chat with chatbot
 @app.route('/api/chat', methods=['POST'])
 def chat():
     try:
@@ -1207,12 +1216,13 @@ def chat():
         if not user_message:
             return jsonify({'error': 'No message provided'}), 400
         
-        chatbot = AirQualityChatbot (app)
+        chatbot = AirQualityChatbot(app)
         response = chatbot.generate_response(user_message)
         
         return jsonify({'response': response})
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     app.run(debug=True)
