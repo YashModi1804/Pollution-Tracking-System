@@ -18,7 +18,8 @@ from nltk.stem import WordNetLemmatizer
 import requests
 # Define the file paths
 
-default_path = "config/creds2.json"
+base_dir = os.path.dirname(os.path.abspath(__file__))
+default_path = os.path.join(base_dir, 'config', 'creds2.json')
 
 # Check if the file exists and assign the appropriate value to the variable
 SERVICE_ACCOUNT_FILE =default_path
