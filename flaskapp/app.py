@@ -17,11 +17,11 @@ from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 import requests
 # Define the file paths
-file_path = r"D:\Download\SSTA-Smart-System-for-Tracking-Airpollution-main\SSTA-Smart-System-for-Tracking-Airpollution-main\flaskapp\config\creds2.json"
+
 default_path = "config/creds2.json"
 
 # Check if the file exists and assign the appropriate value to the variable
-SERVICE_ACCOUNT_FILE = file_path if os.path.exists(file_path) else default_path
+SERVICE_ACCOUNT_FILE =default_path
 
 # Load your Windy API key
 WINDY_API_KEY = "DHnqHp6YzeueWA6uhkK3cxT8USF5QsuX"
