@@ -16,37 +16,52 @@ from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 import requests
-# Define the file paths
+from dotenv import load_dotenv
 
+# Load environment variables
+load_dotenv()
 base_dir = os.path.dirname(os.path.abspath(__file__))
-default_path = os.path.join(base_dir, 'config', 'creds2.json')
-
-# Check if the file exists and assign the appropriate value to the variable
-SERVICE_ACCOUNT_FILE =default_path
-
-# Load your Windy API key
-WINDY_API_KEY = "DHnqHp6YzeueWA6uhkK3cxT8USF5QsuX"
+app = Flask(__name__)
+cache = Cache(app, config={'CACHE_TYPE': 'simple'})
 
 # Constants for pollutant calculations
 g = 9.82           # Acceleration due to gravity (m/s^2)
 m_H2O = 0.01801528  # Molar mass of water vapor (kg/mol)
 m_dry_air = 0.0289644  # Molar mass of dry air (kg/mol)
+WINDY_API_KEY = "DHnqHp6YzeueWA6uhkK3cxT8USF5QsuX"
 
-# Authenticate to Google Earth Engine using the service account
-credentials = service_account.Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_FILE,
-    scopes=['https://www.googleapis.com/auth/cloud-platform']
-)
-ee.Initialize(credentials)
-# Check if credentials file exists before loading
+# Get credentials with error handling
 try:
-    credentials = service_account.Credentials.from_service_account_file(
-        'config/creds2.json'
+    credentials_json = os.getenv('GOOGLE_CREDENTIALS')
+    
+    # Validate and parse JSON
+    if not credentials_json:
+        raise ValueError("No credentials found in environment")
+    
+    # Attempt to parse JSON
+    credentials_dict = json.loads(credentials_json)
+    
+    # Verify required keys are present
+    required_keys = ['type', 'project_id', 'private_key', 'client_email']
+    for key in required_keys:
+        if key not in credentials_dict:
+            raise ValueError(f"Missing required key: {key}")
+    
+    # Initialize credentials
+    credentials = service_account.Credentials.from_service_account_info(
+        credentials_dict,
+        scopes=['https://www.googleapis.com/auth/cloud-platform']
     )
-except Exception as e:
-    print("Skipping Google API authentication for local testing:", e)
-    credentials = None
+    
+    ee.Initialize(credentials)
 
+except json.JSONDecodeError:
+    print("Invalid JSON format in credentials")
+except ValueError as e:
+    print(f"Credentials validation error: {e}")
+except Exception as e:
+    print(f"Error initializing Google Earth Engine: {e}")
+# Rest of your code remains the same...
 def initialize_nltk():
     """Initialize NLTK by downloading required resources with error handling."""
     required_resources = ['punkt', 'stopwords', 'wordnet', 'averaged_perceptron_tagger']
