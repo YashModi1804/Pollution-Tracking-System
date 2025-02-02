@@ -967,6 +967,252 @@ def get_pollutant_city():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+# CPCB AQI breakpoint table for different pollutants
+CPCB_AQI_BREAKPOINTS = {
+    'PM2.5': [
+        {'bp_low': 0, 'bp_high': 30, 'aqi_low': 0, 'aqi_high': 50},
+        {'bp_low': 31, 'bp_high': 60, 'aqi_low': 51, 'aqi_high': 100},
+        {'bp_low': 61, 'bp_high': 90, 'aqi_low': 101, 'aqi_high': 200},
+        {'bp_low': 91, 'bp_high': 120, 'aqi_low': 201, 'aqi_high': 300},
+        {'bp_low': 121, 'bp_high': 250, 'aqi_low': 301, 'aqi_high': 400},
+        {'bp_low': 251, 'bp_high': 1000, 'aqi_low': 401, 'aqi_high': 500}
+    ],
+    'PM10': [
+        {'bp_low': 0, 'bp_high': 50, 'aqi_low': 0, 'aqi_high': 50},
+        {'bp_low': 51, 'bp_high': 100, 'aqi_low': 51, 'aqi_high': 100},
+        {'bp_low': 101, 'bp_high': 250, 'aqi_low': 101, 'aqi_high': 200},
+        {'bp_low': 251, 'bp_high': 350, 'aqi_low': 201, 'aqi_high': 300},
+        {'bp_low': 351, 'bp_high': 430, 'aqi_low': 301, 'aqi_high': 400},
+        {'bp_low': 431, 'bp_high': 1000, 'aqi_low': 401, 'aqi_high': 500}
+    ],
+    'SO2': [
+        {'bp_low': 0, 'bp_high': 40, 'aqi_low': 0, 'aqi_high': 50},
+        {'bp_low': 41, 'bp_high': 80, 'aqi_low': 51, 'aqi_high': 100},
+        {'bp_low': 81, 'bp_high': 380, 'aqi_low': 101, 'aqi_high': 200},
+        {'bp_low': 381, 'bp_high': 800, 'aqi_low': 201, 'aqi_high': 300},
+        {'bp_low': 801, 'bp_high': 1600, 'aqi_low': 301, 'aqi_high': 400},
+        {'bp_low': 1601, 'bp_high': 2000, 'aqi_low': 401, 'aqi_high': 500}
+    ],
+    'NO2': [
+        {'bp_low': 0, 'bp_high': 40, 'aqi_low': 0, 'aqi_high': 50},
+        {'bp_low': 41, 'bp_high': 80, 'aqi_low': 51, 'aqi_high': 100},
+        {'bp_low': 81, 'bp_high': 180, 'aqi_low': 101, 'aqi_high': 200},
+        {'bp_low': 181, 'bp_high': 280, 'aqi_low': 201, 'aqi_high': 300},
+        {'bp_low': 281, 'bp_high': 400, 'aqi_low': 301, 'aqi_high': 400},
+        {'bp_low': 401, 'bp_high': 2000, 'aqi_low': 401, 'aqi_high': 500}
+    ],
+    'O3': [
+        {'bp_low': 0, 'bp_high': 50, 'aqi_low': 0, 'aqi_high': 50},
+        {'bp_low': 51, 'bp_high': 100, 'aqi_low': 51, 'aqi_high': 100},
+        {'bp_low': 101, 'bp_high': 168, 'aqi_low': 101, 'aqi_high': 200},
+        {'bp_low': 169, 'bp_high': 208, 'aqi_low': 201, 'aqi_high': 300},
+        {'bp_low': 209, 'bp_high': 748, 'aqi_low': 301, 'aqi_high': 400},
+        {'bp_low': 749, 'bp_high': 1000, 'aqi_low': 401, 'aqi_high': 500}
+    ],
+    'CO': [
+        {'bp_low': 0, 'bp_high': 1, 'aqi_low': 0, 'aqi_high': 50},
+        {'bp_low': 1.1, 'bp_high': 2, 'aqi_low': 51, 'aqi_high': 100},
+        {'bp_low': 2.1, 'bp_high': 10, 'aqi_low': 101, 'aqi_high': 200},
+        {'bp_low': 10.1, 'bp_high': 17, 'aqi_low': 201, 'aqi_high': 300},
+        {'bp_low': 17.1, 'bp_high': 34, 'aqi_low': 301, 'aqi_high': 400},
+        {'bp_low': 34.1, 'bp_high': 50, 'aqi_low': 401, 'aqi_high': 500}
+    ]
+}
+
+def create_aqi_calculation(pollutant, image):
+    """Create AQI calculation for an image using Earth Engine operations."""
+    if pollutant == 'PM2.5':
+        return ee.Image(0).expression(
+            'concentration <= 30 ? ((50 - 0) / (30 - 0)) * (concentration - 0) + 0 : \
+            concentration <= 60 ? ((100 - 51) / (60 - 31)) * (concentration - 31) + 51 : \
+            concentration <= 90 ? ((200 - 101) / (90 - 61)) * (concentration - 61) + 101 : \
+            concentration <= 120 ? ((300 - 201) / (120 - 91)) * (concentration - 91) + 201 : \
+            concentration <= 250 ? ((400 - 301) / (250 - 121)) * (concentration - 121) + 301 : \
+            ((500 - 401) / (1000 - 251)) * (concentration - 251) + 401',
+            {'concentration': image}
+        )
+    elif pollutant == 'PM10':
+        return ee.Image(0).expression(
+            'concentration <= 50 ? ((50 - 0) / (50 - 0)) * (concentration - 0) + 0 : \
+            concentration <= 100 ? ((100 - 51) / (100 - 51)) * (concentration - 51) + 51 : \
+            concentration <= 250 ? ((200 - 101) / (250 - 101)) * (concentration - 101) + 101 : \
+            concentration <= 350 ? ((300 - 201) / (350 - 251)) * (concentration - 251) + 201 : \
+            concentration <= 430 ? ((400 - 301) / (430 - 351)) * (concentration - 351) + 301 : \
+            ((500 - 401) / (1000 - 431)) * (concentration - 431) + 401',
+            {'concentration': image}
+        )
+    elif pollutant == 'SO2':
+        return ee.Image(0).expression(
+            'concentration <= 40 ? ((50 - 0) / (40 - 0)) * (concentration - 0) + 0 : \
+            concentration <= 80 ? ((100 - 51) / (80 - 41)) * (concentration - 41) + 51 : \
+            concentration <= 380 ? ((200 - 101) / (380 - 81)) * (concentration - 81) + 101 : \
+            concentration <= 800 ? ((300 - 201) / (800 - 381)) * (concentration - 381) + 201 : \
+            concentration <= 1600 ? ((400 - 301) / (1600 - 801)) * (concentration - 801) + 301 : \
+            ((500 - 401) / (2000 - 1601)) * (concentration - 1601) + 401',
+            {'concentration': image}
+        )
+    elif pollutant == 'NO2':
+        return ee.Image(0).expression(
+            'concentration <= 40 ? ((50 - 0) / (40 - 0)) * (concentration - 0) + 0 : \
+            concentration <= 80 ? ((100 - 51) / (80 - 41)) * (concentration - 41) + 51 : \
+            concentration <= 180 ? ((200 - 101) / (180 - 81)) * (concentration - 81) + 101 : \
+            concentration <= 280 ? ((300 - 201) / (280 - 181)) * (concentration - 181) + 201 : \
+            concentration <= 400 ? ((400 - 301) / (400 - 281)) * (concentration - 281) + 301 : \
+            ((500 - 401) / (2000 - 401)) * (concentration - 401) + 401',
+            {'concentration': image}
+        )
+    elif pollutant == 'O3':
+        return ee.Image(0).expression(
+            'concentration <= 50 ? ((50 - 0) / (50 - 0)) * (concentration - 0) + 0 : \
+            concentration <= 100 ? ((100 - 51) / (100 - 51)) * (concentration - 51) + 51 : \
+            concentration <= 168 ? ((200 - 101) / (168 - 101)) * (concentration - 101) + 101 : \
+            concentration <= 208 ? ((300 - 201) / (208 - 169)) * (concentration - 169) + 201 : \
+            concentration <= 748 ? ((400 - 301) / (748 - 209)) * (concentration - 209) + 301 : \
+            ((500 - 401) / (1000 - 749)) * (concentration - 749) + 401',
+            {'concentration': image}
+        )
+    elif pollutant == 'CO':
+        return ee.Image(0).expression(
+            'concentration <= 1 ? ((50 - 0) / (1 - 0)) * (concentration - 0) + 0 : \
+            concentration <= 2 ? ((100 - 51) / (2 - 1.1)) * (concentration - 1.1) + 51 : \
+            concentration <= 10 ? ((200 - 101) / (10 - 2.1)) * (concentration - 2.1) + 101 : \
+            concentration <= 17 ? ((300 - 201) / (17 - 10.1)) * (concentration - 10.1) + 201 : \
+            concentration <= 34 ? ((400 - 301) / (34 - 17.1)) * (concentration - 17.1) + 301 : \
+            ((500 - 401) / (50 - 34.1)) * (concentration - 34.1) + 401',
+            {'concentration': image}
+        )
+    else:
+        raise ValueError(f'Unsupported pollutant for AQI calculation: {pollutant}')
+
+def process_pollutant_aqi(geometry_data, pollutant, start_date, end_date, scale=1000):
+    """Process pollutant data and calculate AQI for a given geometry."""
+    if pollutant not in POLLUTANT_CONFIGS:
+        raise ValueError(f'Unsupported pollutant for AQI calculation: {pollutant}')
+
+    config = POLLUTANT_CONFIGS[pollutant]
+    bounds = geometry_data['bounds']
+    geometry = geometry_data['geometry']
+
+    # Get the concentration data
+    collection = ee.ImageCollection(config['collection']) \
+        .filterBounds(bounds) \
+        .filterDate(start_date, end_date) \
+        .select(config['band'])
+
+    # Mask negative values
+    def mask_negative_values(image):
+        return image.updateMask(image.gte(0))
+    
+    collection = collection.map(mask_negative_values)
+
+    # Calculate mean concentration
+    mean_image = collection.mean()
+    
+    # Apply scale factor and offset
+    if 'scale_factor' in config:
+        mean_image = mean_image.multiply(config['scale_factor'])
+        if 'offset' in config:
+            mean_image = mean_image.add(config['offset'])
+
+    # Special handling for CO to convert from mol/m² to mg/m³ (approximate conversion)
+    if pollutant == 'CO':
+        # Convert CO from mol/m² to mg/m³
+        # Molecular weight of CO = 28.01 g/mol
+        # Standard atmospheric conditions
+        mean_image = mean_image.multiply(28.01).divide(24.45)
+
+    # Calculate AQI for the image
+    aqi_image = create_aqi_calculation(pollutant, mean_image)
+    
+    # Clip to geometry and mask values outside 0-500 range
+    masked_aqi = aqi_image.clip(geometry) \
+        .updateMask(aqi_image.gte(0).And(aqi_image.lte(500)))
+    
+    # Handle PM2.5 band naming
+    if pollutant == 'PM2.5':
+        masked_aqi = masked_aqi.rename('PM2_5_AQI')
+    else:
+        masked_aqi = masked_aqi.rename(f'{pollutant}_AQI')
+
+    # Calculate AQI statistics
+    stats = masked_aqi.reduceRegion(
+        reducer=ee.Reducer.percentile([5, 95]),
+        geometry=geometry,
+        scale=scale,
+        maxPixels=1e8,
+        bestEffort=True
+    ).getInfo()
+
+    # Handle PM2.5 statistics key
+    if pollutant == 'PM2.5':
+        stats = {
+            'PM2_5_AQI_p5': stats.get('PM2_5_AQI_p5'),
+            'PM2_5_AQI_p95': stats.get('PM2_5_AQI_p95')
+        }
+
+    return masked_aqi, stats, 'AQI'
+
+@app.route('/api/get-pollutant-city-aqi', methods=['GET'])
+def get_pollutant_city_aqi():
+    try:
+        # Extract parameters
+        city = request.args.get('city')
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        pollutant = request.args.get('pollutant')
+        hml = request.args.get('hml', 'false').lower() == 'true'
+
+        if not all([city, start_date, end_date, pollutant]):
+            return jsonify({'error': 'Missing required parameters'}), 400
+
+        # Get optimized city geometry
+        city_data = get_optimized_geometry(
+            f"flaskapp/static/dissolved_output/dissolved_{city.upper()}.geojson",
+            simplify_error=100
+        )
+        
+        # Process AQI data
+        masked_aqi, stats, unit = process_pollutant_aqi(
+            city_data, pollutant, start_date, end_date, scale=1000
+        )
+
+        # Extract min/max AQI values, handling PM2.5 special case
+        if pollutant == 'PM2.5':
+            min_value = stats.get('PM2_5_AQI_p5', None)
+            max_value = stats.get('PM2_5_AQI_p95', None)
+        else:
+            min_value = stats.get(f'{pollutant}_AQI_p5', None)
+            max_value = stats.get(f'{pollutant}_AQI_p95', None)
+
+        if min_value is None or max_value is None:
+            return jsonify({'error': f'Could not calculate AQI range for {pollutant}.'}), 500
+
+        # Set visualization parameters with AQI color scheme
+        vis_params = {
+            'min': 0,
+            'max': 500,
+            'palette': ['#00ff00', '#ffff00', '#ff9933', '#ff0000', '#990066', '#990000']
+        }
+        
+        legend_labels = ['Good (0-50)', 'Satisfactory (51-100)', 'Moderate (101-200)', 
+                        'Poor (201-300)', 'Very Poor (301-400)', 'Severe (401-500)']
+
+        # Generate map
+        map_id = masked_aqi.getMapId(vis_params)
+
+        return jsonify({
+            'tile_url': map_id['tile_fetcher'].url_format,
+            'min': f"{min_value:.2f}",
+            'max': f"{max_value:.2f}",
+            'min_raw': min_value,
+            'max_raw': max_value,
+            'unit': unit,
+            'legend_labels': legend_labels
+        })
+
+    except Exception as e:
+        print(f"Error in get_pollutant_city_aqi: {str(e)}")  # Add debug logging
+        return jsonify({'error': str(e)}), 500
 @app.route('/api/get-time-series', methods=['GET'])
 def get_time_series():
     try:
