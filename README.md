@@ -13,6 +13,7 @@ An AI based cloud platform to predict the real time concentration of Aerosols ov
 > **_Ashutosh Mishra_**, Doctoral Researcher (MEXT Scholar) at Space Robotics Laboratory, Tohoku University, Japan
 
 > ***Mahesh Pathakoti***, Scientist/Engineer-SF, National Remote Sensing Centre, Indian Space Reserach Organisation (ISRO), India
+> **_Yash Modi_**, Intern@ ISRO CSE'26 NIT Srinagar
 
 ---
 
